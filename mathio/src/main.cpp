@@ -28,5 +28,9 @@ int main() {
     MathIO::printMathEquation(parsedRoot);
     std::cout << "\n";
 
+
+
+    
+
     return 0;
 }

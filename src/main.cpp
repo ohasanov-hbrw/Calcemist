@@ -1,3 +1,370 @@
+#ifndef NO_LCD
+#include "ST7305_U8g2.h" // your provided wrapper
+#include <Arduino.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+
+#undef sq
+#undef abs
+#undef round
+#undef min
+#undef max
+#undef radians
+#undef degrees
+#undef bit
+#undef _round
+#undef _abs
+#undef _NOP
+#undef _min
+#undef _max
+
+#include <giac/giac.h>
+
+#include "giac_parser.h"
+#include "mathio_ast_printer.h"
+#include "mathio_node.h"
+#include "mathio_renderer.h"
+
+
+EXT_RAM_BSS_ATTR Node pool[MAX_NODE_POOL];
+
+// ---------- Display ----------
+#define LCD_WIDTH 400
+#define LCD_HEIGHT 300
+
+#define RLCD_SCK_PIN 11
+#define RLCD_MOSI_PIN 12
+#define RLCD_DC_PIN 5
+#define RLCD_CS_PIN 40
+#define RLCD_RST_PIN 41
+
+static ST7305_U8g2 lcd(RLCD_SCK_PIN, RLCD_MOSI_PIN, RLCD_DC_PIN, RLCD_CS_PIN,
+                       RLCD_RST_PIN);
+static U8G2 *u8g2 = nullptr;
+
+EXT_RAM_BSS_ATTR static MathIO::MathRenderer *mathRenderer = nullptr;
+Node *currentMathAST = nullptr;      // holds the parsed AST for rendering
+static bool mathNeedsRender = false; // flag to trigger redraw
+EXT_RAM_BSS_ATTR static giac::context ct;
+
+// ---------- Terminal geometry (top half) ----------
+#define TERM_TOP_MARGIN 5
+#define TERM_BOTTOM_MARGIN 5
+#define TERM_LEFT_MARGIN 10
+#define TERM_RIGHT_MARGIN 10
+
+// The terminal occupies the top half of the screen (0..150)
+#define TERM_HEIGHT (LCD_HEIGHT / 2) // 150
+#define TERM_USABLE_HEIGHT                                                     \
+  (TERM_HEIGHT - TERM_TOP_MARGIN - TERM_BOTTOM_MARGIN)  // 140
+#define LINE_HEIGHT 10                                  // font 6x10
+#define VISIBLE_ROWS (TERM_USABLE_HEIGHT / LINE_HEIGHT) // 14
+
+// ---------- Forward declarations ----------
+void evaluateGiac(const String &input, giac::context *ct);
+char keycodeToAscii(uint8_t kc,
+                    bool shift); // not used but kept for completeness
+
+// ---------- Terminal class ----------
+class Terminal {
+public:
+  Terminal() : cursorIndex(0), topLine(0) {}
+
+  void begin() {
+    u8g2->setFont(u8g2_font_6x10_tf);
+    u8g2->setFontMode(1);  // transparent
+    u8g2->setDrawColor(1); // black on white (reflective LCD)
+    lines.push_back("");   // empty input line
+  }
+
+  // Add a line of output (inserted before the current input line)
+  void print(const String &text) {
+    lines.insert(lines.end() - 1, text);
+    scrollToBottom();
+    render();
+  }
+
+  // Update the current input line
+  void setInput(const String &newInput) {
+    lines.back() = newInput;
+    cursorIndex = newInput.length();
+    scrollToBottom();
+    render();
+  }
+
+  int getCursorIndex() const { return cursorIndex; }
+
+  void setCursor(int idx) {
+    if (idx < 0)
+      idx = 0;
+    if (idx > (int)lines.back().length())
+      idx = lines.back().length();
+    cursorIndex = idx;
+    render();
+  }
+
+  void moveCursorLeft() { setCursor(cursorIndex - 1); }
+  void moveCursorRight() { setCursor(cursorIndex + 1); }
+
+  void backspace() {
+    String &inp = lines.back();
+    if (cursorIndex > 0) {
+      inp.remove(cursorIndex - 1, 1);
+      cursorIndex--;
+      render();
+    }
+  }
+
+  void enter() {
+    // Move input line to history, create new empty input
+    lines.push_back("");
+    cursorIndex = 0;
+    topLine = max(0, (int)lines.size() - VISIBLE_ROWS);
+    render();
+  }
+
+  String getCurrentInput() const { return lines.back(); }
+
+  void scrollToBottom() {
+    int total = lines.size();
+    if (total > VISIBLE_ROWS)
+      topLine = total - VISIBLE_ROWS;
+    else
+      topLine = 0;
+  }
+
+  void render() {
+    // u8g2->clearBuffer();
+    u8g2->setDrawColor(0); // white
+    u8g2->drawBox(0, 0, LCD_WIDTH, LCD_HEIGHT / 2);
+    u8g2->setDrawColor(1); // black
+    // Draw visible lines within the terminal area
+    int y = TERM_TOP_MARGIN;
+    int inputLineIdx = lines.size() - 1;
+
+    for (int i = 0; i < VISIBLE_ROWS; ++i) {
+      int lineIdx = topLine + i;
+      if (lineIdx >= (int)lines.size())
+        break;
+      const String &line = lines[lineIdx];
+
+      // Draw line with left margin
+      u8g2->drawStr(TERM_LEFT_MARGIN, y, line.c_str());
+
+      // If this is the input line, draw the cursor
+      if (lineIdx == inputLineIdx) {
+        int cx = u8g2->getStrWidth(line.substring(0, cursorIndex).c_str());
+        int cursorX = TERM_LEFT_MARGIN + cx;
+        // Draw a vertical bar covering the character height
+        u8g2->drawVLine(cursorX, y - 8, 10); // font height approx. 10
+      }
+      y += LINE_HEIGHT;
+    }
+
+    // Optionally draw a separator line between top and bottom halves
+    u8g2->drawHLine(0, TERM_HEIGHT, LCD_WIDTH);
+
+    u8g2->sendBuffer();
+  }
+
+  void renderAll() {
+    u8g2->clearBuffer();
+
+    // 1. Draw terminal (top half)
+    render(); // now does not send buffer
+
+    // 2. Draw separator line (already drawn by terminal? We can keep it there
+    // or draw here) The terminal already draws a separator line, so no need to
+    // repeat.
+
+    // 3. Draw math expression (bottom half) if present
+    if (mathNeedsRender && currentMathAST) {
+      // Clear bottom half explicitly (in case terminal left garbage)
+      u8g2->setDrawColor(0); // white
+      u8g2->drawBox(0, LCD_HEIGHT / 2, LCD_WIDTH, LCD_HEIGHT / 2);
+      u8g2->setDrawColor(1); // black
+      mathRenderer->render(currentMathAST);
+      mathNeedsRender = false; // rendered once
+    }
+
+    u8g2->sendBuffer();
+  }
+
+private:
+  std::vector<String> lines;
+  int cursorIndex;
+  int topLine;
+};
+
+Terminal term;
+
+// ---------- Giac evaluation (called on Enter) ----------
+void evaluateGiac(const String &input, giac::context *ct) {
+
+  static int prompt_counter = 1;
+
+  // term.print(input);  // echo the command
+
+  try {
+    giac::gen g(input.c_str(), ct);
+    giac::gen res = giac::eval(g, 5, ct);
+    String resStr = res.print(ct).c_str();
+    term.print(String(prompt_counter++) + "<< " + resStr);
+
+    if (currentMathAST) {
+      NodePool::instance().free(currentMathAST);
+      currentMathAST = nullptr;
+    }
+    currentMathAST = MathIO::parseGIAC(input.c_str());
+
+    if (currentMathAST) {
+      Serial.println("=== AST structure ===");
+      MathIO::printAST(currentMathAST);
+      mathNeedsRender = true;
+    }
+
+    if (currentMathAST) {
+      mathNeedsRender = true;
+    } else {
+      term.print("Warning: Could not parse expression for 2D rendering.");
+    }
+
+    term.renderAll();
+
+    // history management
+    giac::vecteur &hin = giac::history_in(ct);
+    giac::vecteur &hout = giac::history_out(ct);
+    hin.push_back(g);
+    hout.push_back(res);
+
+    while (hin.size() > 5) {
+      hin.erase(hin.begin());
+      Serial.println("overflow history_in");
+    }
+    while (hout.size() > 5) {
+      hout.erase(hout.begin());
+      Serial.println("overflow history_out");
+    }
+    giac::vecteur &hplot = giac::history_plot(ct);
+    if (hplot.size() > 5) {
+      hplot.erase(hplot.begin()); // Remove oldest plot object
+    }
+  } catch (const std::runtime_error &err) {
+    term.print("ERROR: " + String(err.what()));
+  } catch (...) {
+    term.print("ERROR: Unknown evaluation error");
+  }
+
+  // Optional: show heap usage as a normal line
+  term.print("Free Heap: " + String(ESP.getFreeHeap()) +
+             " bytes, PSRAM: " + String(ESP.getFreePsram()));
+  term.print("Waiting for new command");
+}
+
+void giacTask(void *pvParameters) {
+  // State machine for escape sequences (arrow keys)
+  static bool escSeen = false;
+  static bool bracketSeen = false;
+
+  mathRenderer = new MathIO::MathRenderer(u8g2);
+  mathRenderer->setArea(0, LCD_HEIGHT / 2, LCD_WIDTH, LCD_HEIGHT / 2);
+
+  while (true) {
+    while (Serial.available() > 0) {
+      char c = Serial.read();
+
+      Serial.print("Received: 0x");
+      Serial.println((uint8_t)c, HEX);
+
+      // -------- Parse escape sequences --------
+
+      // 1. Check if we already have ESC [ and are waiting for the command
+      // letter
+      if (bracketSeen) {
+        if (c == 'D') {
+          term.moveCursorLeft();
+          Serial.println("Left arrow");
+        } else if (c == 'C') {
+          term.moveCursorRight();
+          Serial.println("Right arrow");
+        }
+        // Reset state
+        escSeen = false;
+        bracketSeen = false;
+        continue;
+      }
+
+      // 2. Check if we have just seen ESC
+      if (escSeen) {
+        if (c == '[') {
+          bracketSeen = true; // now we'll wait for the command letter
+        } else {
+          // Unexpected: reset
+          escSeen = false;
+        }
+        continue;
+      }
+
+      // 3. Look for a new ESC
+      if (c == 0x1B) {
+        escSeen = true;
+        continue;
+      }
+
+      // -------- Normal character processing --------
+      if (c == '\r' || c == '\n') {
+        // Enter key
+        String input = term.getCurrentInput();
+        term.enter();
+        evaluateGiac(input, &ct);
+      } else if (c == 0x7F || c == 0x08) {
+        // Backspace
+        term.backspace();
+      } else if (c >= 0x20 && c <= 0x7E) {
+        // Printable character
+        String input = term.getCurrentInput();
+        int pos = term.getCursorIndex();
+        input = input.substring(0, pos) + String(c) + input.substring(pos);
+        term.setInput(input);
+        term.setCursor(pos + 1);
+      }
+      // Ignore other control characters
+    }
+
+    delay(10);
+  }
+}
+
+// ---------- Main Setup ----------
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // Initialize display
+  lcd.begin(0, U8G2_R1);
+  u8g2 = lcd.getU8g2();
+  u8g2->setFont(u8g2_font_6x10_tf);
+  u8g2->setFontMode(1);
+  u8g2->setDrawColor(1);
+  u8g2->enableUTF8Print();
+
+  term.begin();
+  term.print("=== ESP32 Giac CAS Terminal ===");
+  term.print("Use Serial Monitor to enter expressions.");
+  term.print("Type and press Enter to evaluate.");
+  term.print("-----------------------------------");
+  xTaskCreatePinnedToCore(giacTask, "GiacTask",
+                          65536, // 64 KB Stack
+                          NULL,
+                          1, // Priority
+                          NULL,
+                          1 // Core 1
+  );
+}
+
+// ---------- Main Loop: read from Serial ----------
+void loop() { vTaskDelete(NULL); }
+#else
 #include <Arduino.h>
 
 #undef sq
@@ -93,3 +460,4 @@ void setup() {
 void loop() {
   vTaskDelete(NULL); // Delete loopTask to free up memory
 }
+#endif
