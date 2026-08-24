@@ -1,0 +1,7 @@
+1 - Add LovyanGFX Emulator and focus on that.
+2 - Terminal (in the emulator) Input Output with GIAC
+- need to make cmake file properly to compile both giac and LovyanGFX emulator
+- need to go away from the esp32 implementation, esp32 compiles on its own, it is fine.
+- watch memory (add debug for that), it should never exceed 8MB! (maybe 16)
+- macros for memory
+- 320x240x2Bpp double buffer 150kb sacrifice
