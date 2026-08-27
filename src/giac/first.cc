@@ -95,10 +95,17 @@ init_gmp_memory::~init_gmp_memory() { }
 #include <Arduino.h>
 
 size_t giac_allocated = 0;
+size_t giac_allocated_max = 0;
+size_t giac_allocated_max_kb = 0;
 void* operator new(std::size_t size)
 {
   //std::cerr << "Alloc: " << giac_allocated << " + " << size << '\n';
   giac_allocated += size;
+  giac_allocated_max = max(giac_allocated, giac_allocated_max);
+  if(giac_allocated_max / 1000 != giac_allocated_max_kb){
+    giac_allocated_max_kb = giac_allocated_max / 1000 ;
+    std::cout << "Giac allocated " << giac_allocated_max << " bytes max\n";
+  }
   void * p =  heap_caps_malloc(size, MALLOC_CAP_SPIRAM);//std::malloc(size);  
   if(!p) {
     std::bad_alloc ba;

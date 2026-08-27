@@ -1853,7 +1853,7 @@ int bf_rem(bf_t *r, const bf_t *a, const bf_t *b, limb_t prec,
 static inline int bf_get_limb(slimb_t *pres, const bf_t *a, int flags)
 {
 #if LIMB_BITS == 32
-    return bf_get_int32(pres, a, flags);
+    return bf_get_int32((int*)pres, a, flags);
 #else
     return bf_get_int64(pres, a, flags);
 #endif

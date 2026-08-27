@@ -1,3 +1,5 @@
+#include "global.h"
+#include "vecteur.h"
 #ifndef NO_LCD
 #include "ST7305_U8g2.h" // your provided wrapper
 #include <Arduino.h>
@@ -24,6 +26,7 @@
 #include "mathio_ast_printer.h"
 #include "mathio_node.h"
 #include "mathio_renderer.h"
+#include "libbf.h"
 
 
 EXT_RAM_BSS_ATTR Node pool[MAX_NODE_POOL];
@@ -45,13 +48,16 @@ static U8G2 *u8g2 = nullptr;
 EXT_RAM_BSS_ATTR static MathIO::MathRenderer *mathRenderer = nullptr;
 Node *currentMathAST = nullptr;      // holds the parsed AST for rendering
 static bool mathNeedsRender = false; // flag to trigger redraw
-EXT_RAM_BSS_ATTR static giac::context ct;
+giac::context * ct;
 
+bf_context_t * esp32_bf_context;
 // ---------- Terminal geometry (top half) ----------
 #define TERM_TOP_MARGIN 5
 #define TERM_BOTTOM_MARGIN 5
 #define TERM_LEFT_MARGIN 10
 #define TERM_RIGHT_MARGIN 10
+
+
 
 // The terminal occupies the top half of the screen (0..150)
 #define TERM_HEIGHT (LCD_HEIGHT / 2) // 150
@@ -65,7 +71,6 @@ void evaluateGiac(const String &input, giac::context *ct);
 char keycodeToAscii(uint8_t kc,
                     bool shift); // not used but kept for completeness
 
-// ---------- Terminal class ----------
 class Terminal {
 public:
   Terminal() : cursorIndex(0), topLine(0) {}
@@ -73,13 +78,33 @@ public:
   void begin() {
     u8g2->setFont(u8g2_font_6x10_tf);
     u8g2->setFontMode(1);  // transparent
-    u8g2->setDrawColor(1); // black on white (reflective LCD)
+    u8g2->setDrawColor(1); // black on white
     lines.push_back("");   // empty input line
   }
 
-  // Add a line of output (inserted before the current input line)
   void print(const String &text) {
-    lines.insert(lines.end() - 1, text);
+    // 1. Calculate how many 6-pixel characters fit onto one screen line
+    int maxCharsPerLine = (LCD_WIDTH - TERM_LEFT_MARGIN) / 6;
+    if (maxCharsPerLine <= 0) maxCharsPerLine = 20; // Fallback safety catch
+
+    if (text.length() == 0) {
+      lines.insert(lines.end() - 1, "");
+    } else {
+      // 2. Chop long output strings (like 2,000 digits) into readable screen rows
+      for (unsigned int i = 0; i < text.length(); i += maxCharsPerLine) {
+        String chunk = text.substring(i, i + maxCharsPerLine);
+        lines.insert(lines.end() - 1, chunk);
+      }
+    }
+
+    const size_t MAX_SCROLLBACK_LINES = 20; // Total lines allowed in terminal memory
+    
+    while (lines.size() > MAX_SCROLLBACK_LINES) {
+      lines.erase(lines.begin()); 
+    }
+    
+    std::vector<String>(lines).swap(lines);
+
     scrollToBottom();
     render();
   }
@@ -95,10 +120,8 @@ public:
   int getCursorIndex() const { return cursorIndex; }
 
   void setCursor(int idx) {
-    if (idx < 0)
-      idx = 0;
-    if (idx > (int)lines.back().length())
-      idx = lines.back().length();
+    if (idx < 0) idx = 0;
+    if (idx > (int)lines.back().length()) idx = lines.back().length();
     cursorIndex = idx;
     render();
   }
@@ -116,7 +139,6 @@ public:
   }
 
   void enter() {
-    // Move input line to history, create new empty input
     lines.push_back("");
     cursorIndex = 0;
     topLine = max(0, (int)lines.size() - VISIBLE_ROWS);
@@ -134,11 +156,10 @@ public:
   }
 
   void render() {
-    // u8g2->clearBuffer();
     u8g2->setDrawColor(0); // white
     u8g2->drawBox(0, 0, LCD_WIDTH, LCD_HEIGHT / 2);
     u8g2->setDrawColor(1); // black
-    // Draw visible lines within the terminal area
+    
     int y = TERM_TOP_MARGIN;
     int inputLineIdx = lines.size() - 1;
 
@@ -148,43 +169,30 @@ public:
         break;
       const String &line = lines[lineIdx];
 
-      // Draw line with left margin
       u8g2->drawStr(TERM_LEFT_MARGIN, y, line.c_str());
 
-      // If this is the input line, draw the cursor
       if (lineIdx == inputLineIdx) {
         int cx = u8g2->getStrWidth(line.substring(0, cursorIndex).c_str());
         int cursorX = TERM_LEFT_MARGIN + cx;
-        // Draw a vertical bar covering the character height
-        u8g2->drawVLine(cursorX, y - 8, 10); // font height approx. 10
+        u8g2->drawVLine(cursorX, y - 8, 10);
       }
       y += LINE_HEIGHT;
     }
 
-    // Optionally draw a separator line between top and bottom halves
     u8g2->drawHLine(0, TERM_HEIGHT, LCD_WIDTH);
-
     u8g2->sendBuffer();
   }
 
   void renderAll() {
     u8g2->clearBuffer();
+    render(); 
 
-    // 1. Draw terminal (top half)
-    render(); // now does not send buffer
-
-    // 2. Draw separator line (already drawn by terminal? We can keep it there
-    // or draw here) The terminal already draws a separator line, so no need to
-    // repeat.
-
-    // 3. Draw math expression (bottom half) if present
     if (mathNeedsRender && currentMathAST) {
-      // Clear bottom half explicitly (in case terminal left garbage)
       u8g2->setDrawColor(0); // white
       u8g2->drawBox(0, LCD_HEIGHT / 2, LCD_WIDTH, LCD_HEIGHT / 2);
       u8g2->setDrawColor(1); // black
       mathRenderer->render(currentMathAST);
-      mathNeedsRender = false; // rendered once
+      mathNeedsRender = false; 
     }
 
     u8g2->sendBuffer();
@@ -195,6 +203,7 @@ private:
   int cursorIndex;
   int topLine;
 };
+
 
 Terminal term;
 
@@ -222,12 +231,12 @@ void evaluateGiac(const String &input, giac::context *ct) {
       MathIO::printAST(currentMathAST);
       mathNeedsRender = true;
     }
-
-    if (currentMathAST) {
-      mathNeedsRender = true;
-    } else {
-      term.print("Warning: Could not parse expression for 2D rendering.");
-    }
+//
+    //if (currentMathAST) {
+    //  mathNeedsRender = true;
+    //} else {
+    //  term.print("Warning: Could not parse expression for 2D rendering.");
+    //}
 
     term.renderAll();
 
@@ -239,15 +248,18 @@ void evaluateGiac(const String &input, giac::context *ct) {
 
     while (hin.size() > 5) {
       hin.erase(hin.begin());
+      giac::vecteur(hin).swap(hin); 
       Serial.println("overflow history_in");
     }
     while (hout.size() > 5) {
       hout.erase(hout.begin());
+      giac::vecteur(hout).swap(hout); 
       Serial.println("overflow history_out");
     }
     giac::vecteur &hplot = giac::history_plot(ct);
     if (hplot.size() > 5) {
       hplot.erase(hplot.begin()); // Remove oldest plot object
+      giac::vecteur(hplot).swap(hplot); 
     }
   } catch (const std::runtime_error &err) {
     term.print("ERROR: " + String(err.what()));
@@ -261,6 +273,22 @@ void evaluateGiac(const String &input, giac::context *ct) {
   term.print("Waiting for new command");
 }
 
+
+
+void* esp32_psram_bf_realloc(void *opaque, void *ptr, size_t size) {
+    // 1. Free memory if size requested is 0
+    if (size == 0) {
+        if (ptr != NULL) {
+            free(ptr);
+        }
+        return NULL;
+    }
+
+    // 2. Map allocation using the 8-bit capable PSRAM flag
+    // (MALLOC_CAP_SPIRAM forces allocation exclusively out of external RAM)
+    return heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM);
+}
+
 void giacTask(void *pvParameters) {
   // State machine for escape sequences (arrow keys)
   static bool escSeen = false;
@@ -268,13 +296,18 @@ void giacTask(void *pvParameters) {
 
   mathRenderer = new MathIO::MathRenderer(u8g2);
   mathRenderer->setArea(0, LCD_HEIGHT / 2, LCD_WIDTH, LCD_HEIGHT / 2);
+  ct = new giac::context;
+  esp32_bf_context = new bf_context_t;
+  bf_context_init(esp32_bf_context, esp32_psram_bf_realloc, NULL);
+  bf_ctx_ptr = esp32_bf_context;
+  Serial.printf("Allocated %zu bytes in heap for giac context", sizeof(giac::context));
 
   while (true) {
     while (Serial.available() > 0) {
       char c = Serial.read();
 
-      Serial.print("Received: 0x");
-      Serial.println((uint8_t)c, HEX);
+      //Serial.print("Received: 0x");
+      //Serial.println((uint8_t)c, HEX);
 
       // -------- Parse escape sequences --------
 
@@ -316,7 +349,12 @@ void giacTask(void *pvParameters) {
         // Enter key
         String input = term.getCurrentInput();
         term.enter();
-        evaluateGiac(input, &ct);
+        evaluateGiac(input, ct);
+        //if (bf_ctx_ptr != NULL) {
+        //    bf_context_end((bf_context_t *)esp32_bf_context); 
+        //    bf_context_init((bf_context_t *)esp32_bf_context, esp32_psram_bf_realloc, NULL);
+        //}
+        Serial.println("Free Heap: " + String(ESP.getFreeHeap()) + " bytes, PSRAM: " + String(ESP.getFreePsram()));
       } else if (c == 0x7F || c == 0x08) {
         // Backspace
         term.backspace();
@@ -333,6 +371,10 @@ void giacTask(void *pvParameters) {
 
     delay(10);
   }
+  delete ct;
+  delete mathRenderer;
+  bf_context_end((bf_context_t *)esp32_bf_context); 
+  delete esp32_bf_context;
 }
 
 // ---------- Main Setup ----------

@@ -81,7 +81,7 @@ namespace giac {
   };
 
   const static_help_t static_help[]={
-#if defined NSPIRE_NEWLIB || (defined NUMWORKS && !defined NUMWORKS_SLOTB ) || ( !defined(KHICAS) && !defined POCKETCAS)
+#if defined NSPIRE_NEWLIB || (defined NUMWORKS && !defined NUMWORKS_SLOTB ) || ( !defined(KHICAS) && !defined POCKETCAS) // && !defined(ESP_32)
 #include "static_help.h"
 #else
     { "", { "", "", "", "",""}, "", "", "" },
@@ -1589,7 +1589,7 @@ alphasort (const struct dirent **a, const struct dirent **b)
     }
     int n=0;
     while (if_mtt && !if_mtt.eof()){
-      if_mtt.getline(buf,BUFFER_SIZE,char(0xa4)); // was '¤', utf8 not compatible, octal \244
+      if_mtt.getline(buf,BUFFER_SIZE,char(0xa4)); // was 'ï¿½', utf8 not compatible, octal \244
       if (!if_mtt || if_mtt.eof()){
 	if (verbose)
 	  cout << "// Read " << n << " entries from cache " << filename << endl;
@@ -1909,7 +1909,7 @@ alphasort (const struct dirent **a, const struct dirent **b)
   }
 #endif // RTOS_THREADX
 
-  // static char otherchars[]="_.~ ¡¢£¤¥¦§¨©ª«¬­®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ";
+  // static char otherchars[]="_.~ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½";
 
   bool isalphan(char ch){
     if (ch>='0' && ch<='9')
