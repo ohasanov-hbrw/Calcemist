@@ -274,7 +274,7 @@ namespace lgfx
   {
     if (!_inited) return 1;
 
-    _event_proc();
+    //_event_proc();
     SDL_SemWaitTimeout(_update_in_semaphore, 1);
     _update_proc();
     _event_proc();

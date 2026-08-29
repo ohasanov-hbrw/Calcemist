@@ -6,6 +6,7 @@
 #include <SPI.h>
 #include <U8g2lib.h>
 
+
 #undef sq
 #undef abs
 #undef round
@@ -29,51 +30,9 @@
 #include "libbf.h"
 
 
-EXT_RAM_BSS_ATTR Node pool[MAX_NODE_POOL];
-
-// ---------- Display ----------
-#define LCD_WIDTH 400
-#define LCD_HEIGHT 300
-
-#define RLCD_SCK_PIN 11
-#define RLCD_MOSI_PIN 12
-#define RLCD_DC_PIN 5
-#define RLCD_CS_PIN 40
-#define RLCD_RST_PIN 41
-
-static ST7305_U8g2 lcd(RLCD_SCK_PIN, RLCD_MOSI_PIN, RLCD_DC_PIN, RLCD_CS_PIN,
-                       RLCD_RST_PIN);
-static U8G2 *u8g2 = nullptr;
-
-EXT_RAM_BSS_ATTR static MathIO::MathRenderer *mathRenderer = nullptr;
-Node *currentMathAST = nullptr;      // holds the parsed AST for rendering
-static bool mathNeedsRender = false; // flag to trigger redraw
-giac::context * ct;
-
-bf_context_t * esp32_bf_context;
-// ---------- Terminal geometry (top half) ----------
-#define TERM_TOP_MARGIN 5
-#define TERM_BOTTOM_MARGIN 5
-#define TERM_LEFT_MARGIN 10
-#define TERM_RIGHT_MARGIN 10
-
-
-
-// The terminal occupies the top half of the screen (0..150)
-#define TERM_HEIGHT (LCD_HEIGHT / 2) // 150
-#define TERM_USABLE_HEIGHT                                                     \
-  (TERM_HEIGHT - TERM_TOP_MARGIN - TERM_BOTTOM_MARGIN)  // 140
-#define LINE_HEIGHT 10                                  // font 6x10
-#define VISIBLE_ROWS (TERM_USABLE_HEIGHT / LINE_HEIGHT) // 14
-
-// ---------- Forward declarations ----------
-void evaluateGiac(const String &input, giac::context *ct);
-char keycodeToAscii(uint8_t kc,
-                    bool shift); // not used but kept for completeness
-
-class Terminal {
+class Terminal2 {
 public:
-  Terminal() : cursorIndex(0), topLine(0) {}
+  Terminal2() : cursorIndex(0), topLine(0) {}
 
   void begin() {
     u8g2->setFont(u8g2_font_6x10_tf);
@@ -205,7 +164,52 @@ private:
 };
 
 
-Terminal term;
+EXT_RAM_BSS_ATTR Node pool[MAX_NODE_POOL];
+
+// ---------- Display ----------
+#define LCD_WIDTH 400
+#define LCD_HEIGHT 300
+
+#define RLCD_SCK_PIN 11
+#define RLCD_MOSI_PIN 12
+#define RLCD_DC_PIN 5
+#define RLCD_CS_PIN 40
+#define RLCD_RST_PIN 41
+
+static ST7305_U8g2 lcd(RLCD_SCK_PIN, RLCD_MOSI_PIN, RLCD_DC_PIN, RLCD_CS_PIN,
+                       RLCD_RST_PIN);
+static U8G2 *u8g2 = nullptr;
+
+EXT_RAM_BSS_ATTR static MathIO::MathRenderer *mathRenderer = nullptr;
+Node *currentMathAST = nullptr;      // holds the parsed AST for rendering
+static bool mathNeedsRender = false; // flag to trigger redraw
+giac::context * ct;
+
+bf_context_t * esp32_bf_context;
+// ---------- Terminal geometry (top half) ----------
+#define TERM_TOP_MARGIN 5
+#define TERM_BOTTOM_MARGIN 5
+#define TERM_LEFT_MARGIN 10
+#define TERM_RIGHT_MARGIN 10
+
+
+
+// The terminal occupies the top half of the screen (0..150)
+#define TERM_HEIGHT (LCD_HEIGHT / 2) // 150
+#define TERM_USABLE_HEIGHT                                                     \
+  (TERM_HEIGHT - TERM_TOP_MARGIN - TERM_BOTTOM_MARGIN)  // 140
+#define LINE_HEIGHT 10                                  // font 6x10
+#define VISIBLE_ROWS (TERM_USABLE_HEIGHT / LINE_HEIGHT) // 14
+
+// ---------- Forward declarations ----------
+void evaluateGiac(const String &input, giac::context *ct);
+char keycodeToAscii(uint8_t kc,
+                    bool shift); // not used but kept for completeness
+
+
+
+
+Terminal2 term;
 
 // ---------- Giac evaluation (called on Enter) ----------
 void evaluateGiac(const String &input, giac::context *ct) {

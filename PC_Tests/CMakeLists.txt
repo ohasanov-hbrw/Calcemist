@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(GiacLovyanGFX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # ------------------- OS detection -------------------
 if(UNIX AND NOT APPLE)
     set(LINUX TRUE)
@@ -129,6 +131,8 @@ set(GIAC_SOURCES
 # ------------------- LovyanGFX + SDL sources -------------------
 file(GLOB LGFX_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS
     src/*.cpp                         # Your application code (main included)
+    src/fonts/*.cpp
+    src/fonts/*.c
     LovyanGFX/src/lgfx/Fonts/efont/*.c
     LovyanGFX/src/lgfx/Fonts/IPA/*.c
     LovyanGFX/src/lgfx/Fonts/lvgl/*.c
@@ -152,6 +156,7 @@ target_include_directories(giac_lgfxsdl PRIVATE
     giac/headers
     LovyanGFX/src/
     include/   # <- Remove this line if you don't have a custom 'include' folder
+    include/fonts/
 )
 
 # ------------------- Compile definitions -------------------
