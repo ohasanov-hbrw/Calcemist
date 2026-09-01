@@ -169,44 +169,14 @@ void setup() {
 
   term.init(&canvas, 320, 240, &font7x13symbols, &font7x13bold, TFT_WHITE,
             TFT_BLACK);
-  term.addCharTerm(0);
-  term.addCharTerm(' ');
+  term.addChar(0, Terminal::FLAGS_IMMUNE);
+  term.addChar(' ', Terminal::FLAGS_IMMUNE);
 }
 
 using namespace std;
 using namespace giac;
 
 void loop() {
-
-  // ---- 2. Update drawing (your original loop logic) ----
-  //++i;
-  // lcd.fillCircle(current_x >> 8, current_y >> 8, 5, i);
-  // current_x += add_x;
-  // current_y += add_y;
-  // add_x += (current_x < target_x) ? 1 : -1;
-  // add_y += (current_y < target_y) ? 1 : -1;
-  //
-  //// ---- 3. Touch input ----
-  // lgfx::touch_point_t new_tp;
-  // if (lcd.getTouch(&new_tp)) {
-  //   target_x = new_tp.x * 256;
-  //   target_y = new_tp.y * 256;
-  //   lcd.drawCircle(new_tp.x, new_tp.y, 5, TFT_WHITE);
-  // }
-  //
-  //// ---- 4. Console input (non‑blocking) ----
-  // string line;
-  // if (readLineNonBlocking(line)) {
-  //   cout << n << ">> " << line << endl;
-  //   cout << n++ << "<< ";
-  //   try {
-  //     giac::gen g = giac::gen(line, &ct);
-  //     giac::gen result = giac::eval(g, 1, &ct);
-  //     cout << result << endl;
-  //   } catch (const runtime_error &err) {
-  //     cout << "ERROR: " << err.what() << endl;
-  //   }
-  // }
   canvas.fillSprite(TFT_BLACK);
 
   int key = readKeyNonBlockingSDL();
@@ -217,12 +187,12 @@ void loop() {
 
     char *buffer = term.getCurrentInput();
     char *p = buffer;
-    term.addCharTerm('g');
-    term.addCharTerm('i');
-    term.addCharTerm('a');
-    term.addCharTerm('c');
-    term.addCharTerm(':');
-    term.addCharTerm(' ');
+    term.addChar('g', Terminal::FLAGS_IMMUNE);
+    term.addChar('i', Terminal::FLAGS_IMMUNE);
+    term.addChar('a', Terminal::FLAGS_IMMUNE);
+    term.addChar('c', Terminal::FLAGS_IMMUNE);
+    term.addChar(':', Terminal::FLAGS_IMMUNE);
+    term.addChar(' ', Terminal::FLAGS_IMMUNE);
     // while(p && *p){
     //   term.addChar(*p);
     //   p++;
@@ -255,8 +225,8 @@ void loop() {
 
     calcemistFree(buffer);
     term.enter();
-    term.addCharTerm(0);
-    term.addCharTerm(' ');
+    term.addChar(0, Terminal::FLAGS_IMMUNE);
+    term.addChar(' ', Terminal::FLAGS_IMMUNE);
   }
 
   if (key == 8) // Backspace control char
@@ -266,6 +236,10 @@ void loop() {
     term.moveCursorLeft();
   if (key == KEY_RIGHT)
     term.moveCursorRight();
+  if (key == KEY_UP)
+    term.scroll(-1);
+  if (key == KEY_DOWN)
+    term.scroll(1);
 
   term.render(0, 0);
 
