@@ -185,11 +185,10 @@ char *Terminal::getCurrentInput() {
 }
 
 void Terminal::render(uint16_t x, uint16_t y) {
-
   p_base->setTextColor(p_font_color);
   p_base->fillRect(x, y, p_width, p_height, p_background_color);
-  uint16_t x_offset = (p_width - (p_font_width * p_chars_per_line)) / 2;
-  uint16_t y_offset = (p_height - (p_font_height * p_lines_per_screen)) / 2;
+  uint16_t x_offset = (p_width - (p_font_width * p_chars_per_line)) / 2 + x;
+  uint16_t y_offset = (p_height - (p_font_height * p_lines_per_screen)) / 2 + y;
   for (uint32_t i = p_screen_offset * p_chars_per_line;
        i < (p_chars_per_line * p_lines_per_screen) +
                p_screen_offset * p_chars_per_line;

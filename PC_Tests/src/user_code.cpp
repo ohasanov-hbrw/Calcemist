@@ -47,6 +47,8 @@ int32_t add_y = 0;
 Terminal term;
 
 giac::context ct; // Giac context (assuming giac namespace)
+giac::gen pretty_result;
+bool has_pretty_result = true;
 
 int i = 0;
 int n = 0;
@@ -173,7 +175,7 @@ void setup() {
   canvas.createSprite(320, 240);
   canvas.fillScreen(TFT_BLACK);
 
-  term.init(&canvas, 320, 240, &font7x13symbols, &font7x13bold, TFT_WHITE,
+  term.init(&canvas, 320, 120, &font7x13symbols, &font7x13bold, TFT_WHITE,
             TFT_BLACK);
   term.addChar(0, Terminal::FLAGS_IMMUNE);
   term.addChar(' ', Terminal::FLAGS_IMMUNE);
@@ -189,7 +191,9 @@ void setup() {
     giac::gen testA = giac::symbolic(giac::at_plus, sumTest);
     std::cout << "testA: " << testA.print() << std::endl;
     print_giac_ast_iterative(testA);
-    giac::gen testB = giac::gen("1+2+3-4+5", &ct);
+    giac::gen testB = giac::gen("1+(3+5*x/sin(3*x))/(1/1/1)", &ct);
+    testB = convert_inv_to_div(testB);
+    pretty_result = testB;
     std::cout << "testB: " << testB.print() << std::endl;
     print_giac_ast_iterative(testB);
 
@@ -225,22 +229,13 @@ void loop() {
       giac::gen g = giac::gen(buffer, &ct);
       giac::gen result = giac::eval(g, 1, &ct);
       //giac::gen amogus = giac::symbolic(giac::at_sin, giac::symbolic(giac::at_plus, giac::symbolic(giac::at_pow, giac::identificateur("x"), giac::gen(2)), giac::gen(3)));
-      std::string result_str = result.print(&ct);
-
-
       std::cout << "input: " << std::endl;
       print_giac_ast_iterative(g);
       std::cout << "output: " << std::endl;
       result = convert_inv_to_div(result);
       print_giac_ast_iterative(result);
-
-
-      for (char c : result_str) {
-        if (c == 13 || c == 10)
-          term.enter();
-        else
-          term.addChar(c);
-      }
+      pretty_result = result;
+      has_pretty_result = true;
     } catch (const runtime_error &err) {
       for (char c : "ERROR: ") {
         if (c != '\0')
@@ -274,7 +269,10 @@ void loop() {
   if (key == KEY_DOWN)
     term.scroll(1);
 
-  term.render(0, 0);
+  term.render(0, 120);
+
+  if (has_pretty_result)
+    render_giac_ast(&canvas, pretty_result, 8, 8);
 
   canvas.pushSprite(0, 0);
 

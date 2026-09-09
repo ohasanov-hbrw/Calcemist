@@ -163,6 +163,7 @@ target_include_directories(giac_lgfxsdl PRIVATE
 target_compile_definitions(giac_lgfxsdl PRIVATE
     # From Giac
     -DHAVE_NO_HOME_DIRECTORY
+    -DHAVE_ALLOCA_H
     -DGIAC_GGB
     -DIN_GIAC
     -DHAVE_LIB_PTHREAD
