@@ -8,6 +8,7 @@
 
 #include "gen.h"
 #include "giac.h"
+#include "global.h"
 #include "minigiac.hpp"
 #include "usual.h"
 #include <stdint.h>
@@ -24,6 +25,9 @@
 #include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
+
+
+#include "giac_ast.hpp"
 
 LGFX lcd(320, 240);
 LGFX lcd2(135, 240);
@@ -173,6 +177,23 @@ void setup() {
             TFT_BLACK);
   term.addChar(0, Terminal::FLAGS_IMMUNE);
   term.addChar(' ', Terminal::FLAGS_IMMUNE);
+
+
+    giac::vecteur sumTest;
+    sumTest.push_back(giac::gen(1));
+    sumTest.push_back(giac::gen(2));
+    sumTest.push_back(giac::gen(3));
+    sumTest.push_back(giac::gen(-4));
+    sumTest.push_back(giac::gen(5));
+
+    giac::gen testA = giac::symbolic(giac::at_plus, sumTest);
+    std::cout << "testA: " << testA.print() << std::endl;
+    print_giac_ast_iterative(testA);
+    giac::gen testB = giac::gen("1+2+3-4+5", &ct);
+    std::cout << "testB: " << testB.print() << std::endl;
+    print_giac_ast_iterative(testB);
+
+
 }
 
 using namespace std;
@@ -203,8 +224,17 @@ void loop() {
     try {
       giac::gen g = giac::gen(buffer, &ct);
       giac::gen result = giac::eval(g, 1, &ct);
-      giac::gen amogus = giac::symbolic(giac::at_sin, giac::symbolic(giac::at_plus, giac::symbolic(giac::at_pow, giac::identificateur("x"), giac::gen(2)), giac::gen(3)));
-      std::string result_str = amogus.print(&ct);
+      //giac::gen amogus = giac::symbolic(giac::at_sin, giac::symbolic(giac::at_plus, giac::symbolic(giac::at_pow, giac::identificateur("x"), giac::gen(2)), giac::gen(3)));
+      std::string result_str = result.print(&ct);
+
+
+      std::cout << "input: " << std::endl;
+      print_giac_ast_iterative(g);
+      std::cout << "output: " << std::endl;
+      result = convert_inv_to_div(result);
+      print_giac_ast_iterative(result);
+
+
       for (char c : result_str) {
         if (c == 13 || c == 10)
           term.enter();
