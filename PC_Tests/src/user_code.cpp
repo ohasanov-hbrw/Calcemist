@@ -6,8 +6,10 @@
 // Windows ) #include <windows.h> #include <winhttp.h> #pragma comment (lib,
 // "winhttp.lib")
 
+#include "gen.h"
 #include "giac.h"
 #include "minigiac.hpp"
+#include "usual.h"
 #include <stdint.h>
 
 #define LGFX_USE_V1
@@ -201,7 +203,8 @@ void loop() {
     try {
       giac::gen g = giac::gen(buffer, &ct);
       giac::gen result = giac::eval(g, 1, &ct);
-      std::string result_str = result.print(&ct);
+      giac::gen amogus = giac::symbolic(giac::at_sin, giac::symbolic(giac::at_plus, giac::symbolic(giac::at_pow, giac::identificateur("x"), giac::gen(2)), giac::gen(3)));
+      std::string result_str = amogus.print(&ct);
       for (char c : result_str) {
         if (c == 13 || c == 10)
           term.enter();
