@@ -5,3 +5,5 @@
 
 extern const uint8_t u8g2_font_7x13_m_symbols[];
 extern const uint8_t u8g2_font_7x13B_tf[];
+extern const uint8_t u8g2_font_5x8_tf[];
+extern const uint8_t u8g2_font_9x15_m_symbols[];

@@ -11,6 +11,7 @@
 #include "global.h"
 #include "minigiac.hpp"
 #include "usual.h"
+#include <dirent.h>
 #include <stdint.h>
 
 #define LGFX_USE_V1
@@ -26,7 +27,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-
 #include "giac_ast.hpp"
 
 LGFX lcd(320, 240);
@@ -36,6 +36,8 @@ lgfx::LGFX_Sprite canvas(&lcd);
 
 const lgfx::U8g2font font7x13symbols(u8g2_font_7x13_m_symbols);
 const lgfx::U8g2font font7x13bold(u8g2_font_7x13B_tf);
+const lgfx::U8g2font font5x8normal(u8g2_font_5x8_tf);
+const lgfx::U8g2font font9x15symbols(u8g2_font_9x15_m_symbols);
 
 int32_t target_x = 160 * 256;
 int32_t target_y = 120 * 256;
@@ -180,24 +182,21 @@ void setup() {
   term.addChar(0, Terminal::FLAGS_IMMUNE);
   term.addChar(' ', Terminal::FLAGS_IMMUNE);
 
+  giac::vecteur sumTest;
+  sumTest.push_back(giac::gen(1));
+  sumTest.push_back(giac::gen(2));
+  sumTest.push_back(giac::gen(3));
+  sumTest.push_back(giac::gen(-4));
+  sumTest.push_back(giac::gen(5));
 
-    giac::vecteur sumTest;
-    sumTest.push_back(giac::gen(1));
-    sumTest.push_back(giac::gen(2));
-    sumTest.push_back(giac::gen(3));
-    sumTest.push_back(giac::gen(-4));
-    sumTest.push_back(giac::gen(5));
-
-    giac::gen testA = giac::symbolic(giac::at_plus, sumTest);
-    std::cout << "testA: " << testA.print() << std::endl;
-    print_giac_ast_iterative(testA);
-    giac::gen testB = giac::gen("1+(3+5*x/sin(3*x))/(1/1/1)", &ct);
-    testB = convert_inv_to_div(testB);
-    pretty_result = testB;
-    std::cout << "testB: " << testB.print() << std::endl;
-    print_giac_ast_iterative(testB);
-
-
+  giac::gen testA = giac::symbolic(giac::at_plus, sumTest);
+  std::cout << "testA: " << testA.print() << std::endl;
+  print_giac_ast_iterative(testA);
+  giac::gen testB = giac::gen("1+(3+5*x/sin(3*x))/(1/1/1)", &ct);
+  testB = convert_inv_to_div(testB);
+  pretty_result = testB;
+  std::cout << "testB: " << testB.print() << std::endl;
+  print_giac_ast_iterative(testB);
 }
 
 using namespace std;
@@ -228,13 +227,15 @@ void loop() {
     try {
       giac::gen g = giac::gen(buffer, &ct);
       giac::gen result = giac::eval(g, 1, &ct);
-      //giac::gen amogus = giac::symbolic(giac::at_sin, giac::symbolic(giac::at_plus, giac::symbolic(giac::at_pow, giac::identificateur("x"), giac::gen(2)), giac::gen(3)));
+      // giac::gen amogus = giac::symbolic(giac::at_sin,
+      // giac::symbolic(giac::at_plus, giac::symbolic(giac::at_pow,
+      // giac::identificateur("x"), giac::gen(2)), giac::gen(3)));
       std::cout << "input: " << std::endl;
       print_giac_ast_iterative(g);
       std::cout << "output: " << std::endl;
       result = convert_inv_to_div(result);
       print_giac_ast_iterative(result);
-      pretty_result = result;
+      pretty_result = convert_inv_to_div(g);
       has_pretty_result = true;
     } catch (const runtime_error &err) {
       for (char c : "ERROR: ") {
@@ -260,19 +261,28 @@ void loop() {
   if (key == 8) // Backspace control char
     term.backspace();
 
-  if (key == KEY_LEFT)
+  if (key == KEY_LEFT){
     term.moveCursorLeft();
-  if (key == KEY_RIGHT)
+    //MathRenderer::move_cursor(Direction::LEFT);
+  }
+  if (key == KEY_RIGHT){
     term.moveCursorRight();
+    //MathRenderer::move_cursor(Direction::RIGHT);
+  }
   if (key == KEY_UP)
     term.scroll(-1);
   if (key == KEY_DOWN)
     term.scroll(1);
 
+
+
+
   term.render(0, 120);
 
-  if (has_pretty_result)
-    render_giac_ast(&canvas, pretty_result, 8, 8);
+  if (has_pretty_result) {
+    MathFonts fonts{&font9x15symbols, &font7x13symbols, &font5x8normal};
+    render_giac_ast(&canvas, fonts, pretty_result, 8, 8);
+  }
 
   canvas.pushSprite(0, 0);
 

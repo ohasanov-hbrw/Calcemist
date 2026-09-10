@@ -1,12 +1,76 @@
 #include "giac_ast.hpp"
 #include "vecteur.h"
+#include <algorithm>
 #include <giac.h>
 #include <iostream>
 #include <string>
 #include <vector>
-#include <algorithm>
 
-namespace {
+namespace MathRenderer {
+
+// Tracks node selection path through the AST
+static std::vector<size_t> cursor_path;
+static const giac::gen *current_root = nullptr;
+
+// Helper to get node reference from path
+const giac::gen *get_node_at_path(const giac::gen *node,
+                                  const std::vector<size_t> &path,
+                                  size_t depth = 0) {
+  if (!node || depth >= path.size())
+    return node;
+  if (node->type == giac::_SYMB) {
+    const giac::gen &args = node->_SYMBptr->feuille;
+    if (args.type == giac::_VECT && path[depth] < args._VECTptr->size()) {
+      return get_node_at_path(&(*args._VECTptr)[path[depth]], path, depth + 1);
+    }
+  }
+  return node;
+}
+
+void move_cursor(Direction dir) {
+  if (!current_root)
+    return;
+
+  if (cursor_path.empty()) {
+    cursor_path.push_back(0);
+    return;
+  }
+
+  switch (dir) {
+  case Direction::RIGHT:
+    cursor_path.back()++;
+    if (!get_node_at_path(current_root, cursor_path)) {
+      cursor_path.back()--; // Boundary check
+    }
+    break;
+
+  case Direction::LEFT:
+    if (cursor_path.back() > 0) {
+      cursor_path.back()--;
+    } else if (cursor_path.size() > 1) {
+      cursor_path.pop_back();
+    }
+    break;
+
+  case Direction::DOWN:
+    // Navigate into child node / denominator / base
+    cursor_path.push_back(1);
+    if (!get_node_at_path(current_root, cursor_path)) {
+      cursor_path.pop_back();
+    }
+    break;
+
+  case Direction::UP:
+    // Navigate into numerator / exponent or move up tree
+    if (cursor_path.back() > 0) {
+      cursor_path.back() = 0;
+    } else if (cursor_path.size() > 1) {
+      cursor_path.pop_back();
+    }
+    break;
+  }
+}
+
 struct MathLayout {
   int32_t width;
   int32_t height;
@@ -15,13 +79,48 @@ struct MathLayout {
 
 constexpr int32_t kMathGap = 4;
 constexpr int32_t kFractionGap = 3;
+constexpr int32_t kFractionWidth = 10;
 constexpr int32_t kMultiplicationWidth = 7;
+constexpr int32_t kSideGap = kMathGap / 2; // 2px left, 2px right
+constexpr int32_t kPowGap = 2;             // Spacing between base and exponent
+
+static MathFonts fonts;
 
 std::string math_text(const giac::gen &node) {
   return node.print(giac::context0);
 }
 
-MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display) {
+void set_font_for_level(lgfx::LGFXBase *display, int32_t level) {
+  display->setFont(fonts.get(level));
+}
+
+int32_t get_paren_width(lgfx::LGFXBase *display, int32_t child_height,
+                        int32_t line_height) {
+  if (child_height <= line_height) {
+    return display->textWidth("(");
+  }
+  return 5; // Width for scaled vector parenthesis
+}
+
+void draw_scaled_paren(lgfx::LGFXBase *display, int32_t x, int32_t y_top,
+                       int32_t height, int32_t width, bool is_left) {
+  int32_t y_bot = y_top + height - 1;
+  int32_t bend = std::clamp(height / 6, 2, width);
+
+  if (is_left) {
+    display->drawLine(x + width - 1, y_top, x, y_top + bend);
+    display->drawLine(x, y_top + bend, x, y_bot - bend);
+    display->drawLine(x, y_bot - bend, x + width - 1, y_bot);
+  } else {
+    display->drawLine(x, y_top, x + width - 1, y_top + bend);
+    display->drawLine(x + width - 1, y_top + bend, x + width - 1, y_bot - bend);
+    display->drawLine(x + width - 1, y_bot - bend, x, y_bot);
+  }
+}
+
+MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
+                       int32_t level = 0) {
+  set_font_for_level(display, level);
   const int32_t line_height = display->fontHeight();
 
   if (node.type != giac::_SYMB) {
@@ -34,29 +133,39 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display) {
 
   if (symbolic->sommet == giac::at_pow && args.type == giac::_VECT &&
       args._VECTptr->size() == 2) {
-    MathLayout base = math_layout((*args._VECTptr)[0], display);
-    MathLayout exponent = math_layout((*args._VECTptr)[1], display);
-    int32_t base_y = exponent.height / 2;
-    return {base.width + exponent.width,
-            std::max(exponent.height, base_y + base.height),
-            base_y + base.axis};
+    MathLayout base = math_layout((*args._VECTptr)[0], display, level);
+    MathLayout exponent = math_layout((*args._VECTptr)[1], display, level + 1);
+
+    // Keep exponent bottom near the top of the base (capped at 3px from top
+    // edge)
+    int32_t exp_bottom_rel = std::min(3, std::max(2, base.axis / 2));
+    int32_t exp_y_rel = exp_bottom_rel - exponent.height;
+    int32_t top_offset = (exp_y_rel < 0) ? -exp_y_rel : 0;
+
+    int32_t base_y = top_offset;
+    int32_t exp_y = top_offset + exp_y_rel;
+
+    int32_t total_width = base.width + kPowGap + exponent.width;
+    int32_t total_height =
+        std::max(base_y + base.height, exp_y + exponent.height);
+    int32_t total_axis = base_y + base.axis;
+
+    return {total_width, total_height, total_axis};
   }
 
-  if (symbolic->sommet == giac::at_plus ||
-      symbolic->sommet == giac::at_prod) {
+  if (symbolic->sommet == giac::at_plus || symbolic->sommet == giac::at_prod) {
     int32_t width = 0;
     int32_t above_axis = line_height / 2;
     int32_t below_axis = line_height - above_axis;
-    const giac::vecteur *terms = args.type == giac::_VECT
-                                     ? args._VECTptr
-                                     : nullptr;
+    const giac::vecteur *terms =
+        args.type == giac::_VECT ? args._VECTptr : nullptr;
+
     if (terms) {
       for (size_t i = 0; i < terms->size(); ++i) {
-        MathLayout child = math_layout((*terms)[i], display);
-        int32_t separator_width =
-            symbolic->sommet == giac::at_plus
-                ? display->textWidth("+") + kMathGap
-                : kMultiplicationWidth;
+        MathLayout child = math_layout((*terms)[i], display, level);
+        int32_t separator_width = symbolic->sommet == giac::at_plus
+                                      ? display->textWidth("+") + kMathGap
+                                      : kMultiplicationWidth;
         width += child.width + (i ? separator_width : 0);
         above_axis = std::max(above_axis, child.axis);
         below_axis = std::max(below_axis, child.height - child.axis);
@@ -67,31 +176,45 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display) {
 
   std::string op = symbolic->sommet.ptr()->print(giac::context0);
   if (op == "/" && args.type == giac::_VECT && args._VECTptr->size() == 2) {
-    MathLayout numerator = math_layout((*args._VECTptr)[0], display);
-    MathLayout denominator = math_layout((*args._VECTptr)[1], display);
+    MathLayout numerator = math_layout((*args._VECTptr)[0], display, level);
+    MathLayout denominator = math_layout((*args._VECTptr)[1], display, level);
     int32_t axis = numerator.height + kFractionGap;
-    return {std::max(numerator.width, denominator.width) + 6,
+    return {std::max(numerator.width, denominator.width) + kFractionWidth,
             axis + 1 + kFractionGap + denominator.height, axis};
   }
 
-  MathLayout child = math_layout(args, display);
+  MathLayout child = math_layout(args, display, level);
+  set_font_for_level(display, level);
   int32_t op_width = display->textWidth(op.c_str());
   int32_t text_axis = line_height / 2;
   int32_t axis = std::max(text_axis, child.axis);
   int32_t below_axis =
       std::max(line_height - text_axis, child.height - child.axis);
-  return {op_width + child.width + display->textWidth("()"),
-          axis + below_axis, axis};
+
+  int32_t paren_w = get_paren_width(display, child.height, line_height);
+
+  return {op_width + kSideGap + child.width + (paren_w * 2), axis + below_axis,
+          axis};
 }
 
 void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
-               int32_t y) {
+               int32_t y, int32_t level = 0) {
+  set_font_for_level(display, level);
   const int32_t line_height = display->fontHeight();
-  const MathLayout layout = math_layout(node, display);
+  const MathLayout layout = math_layout(node, display, level);
 
   if (node.type != giac::_SYMB) {
+    set_font_for_level(display, level);
     std::string text = math_text(node);
     display->drawString(text.c_str(), x, y);
+
+    // // Render cursor if current node is targeted
+    // if (current_root && &node == get_node_at_path(current_root, cursor_path))
+    // {
+    //   int32_t text_w = display->textWidth(text.c_str());
+    //   display->drawFastVLine(x + text_w + 1, y, line_height, TFT_WHITE);
+    // }
+
     return;
   }
 
@@ -102,34 +225,45 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
       args._VECTptr->size() == 2) {
     const giac::gen &base = (*args._VECTptr)[0];
     const giac::gen &exponent = (*args._VECTptr)[1];
-    MathLayout base_layout = math_layout(base, display);
-    draw_math(display, base, x, y + layout.axis - base_layout.axis);
-    draw_math(display, exponent,
-              x + math_layout(base, display).width,
-              y);
+
+    MathLayout base_layout = math_layout(base, display, level);
+    MathLayout exp_layout = math_layout(exponent, display, level + 1);
+
+    int32_t exp_bottom_rel = std::min(3, std::max(2, base_layout.axis / 2));
+    int32_t exp_y_rel = exp_bottom_rel - exp_layout.height;
+    int32_t top_offset = (exp_y_rel < 0) ? -exp_y_rel : 0;
+
+    int32_t base_y = top_offset;
+    int32_t exp_y = top_offset + exp_y_rel;
+
+    draw_math(display, base, x, y + base_y, level);
+    draw_math(display, exponent, x + base_layout.width + kPowGap, y + exp_y,
+              level + 1);
     return;
   }
 
-  if (symbolic->sommet == giac::at_plus ||
-      symbolic->sommet == giac::at_prod) {
+  if (symbolic->sommet == giac::at_plus || symbolic->sommet == giac::at_prod) {
     if (args.type == giac::_VECT) {
       int32_t cursor = x;
+      const int32_t side_gap = kMathGap / 2;
+
       for (size_t i = 0; i < args._VECTptr->size(); ++i) {
         const giac::gen &term = (*args._VECTptr)[i];
-        MathLayout child = math_layout(term, display);
+        MathLayout child = math_layout(term, display, level);
+
         if (i) {
+          set_font_for_level(display, level);
           if (symbolic->sommet == giac::at_plus) {
-            display->drawString("+", cursor,
-                                y + layout.axis - line_height / 2);
-            cursor += display->textWidth("+") + kMathGap;
+            cursor += side_gap;
+            display->drawString("+", cursor, y + layout.axis - line_height / 2);
+            cursor += display->textWidth("+") + side_gap;
           } else {
             display->fillCircle(cursor + kMultiplicationWidth / 2,
                                 y + layout.axis, 1, TFT_WHITE);
             cursor += kMultiplicationWidth;
           }
         }
-        draw_math(display, term, cursor,
-                  y + layout.axis - child.axis);
+        draw_math(display, term, cursor, y + layout.axis - child.axis, level);
         cursor += child.width;
       }
       return;
@@ -138,38 +272,67 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
 
   std::string op = symbolic->sommet.ptr()->print(giac::context0);
   if (op == "/" && args.type == giac::_VECT && args._VECTptr->size() == 2) {
-    MathLayout numerator = math_layout((*args._VECTptr)[0], display);
-    MathLayout denominator = math_layout((*args._VECTptr)[1], display);
-    int32_t fraction_width = std::max(numerator.width, denominator.width) + 6;
+    MathLayout numerator = math_layout((*args._VECTptr)[0], display, level);
+    MathLayout denominator = math_layout((*args._VECTptr)[1], display, level);
+    int32_t fraction_width =
+        std::max(numerator.width, denominator.width) + kFractionWidth;
+
     draw_math(display, (*args._VECTptr)[0],
-              x + (fraction_width - numerator.width) / 2, y);
+              x + (fraction_width - numerator.width) / 2, y, level);
+
     int32_t line_y = y + numerator.height + kFractionGap;
     display->drawLine(x, line_y, x + fraction_width - 1, line_y);
+
     draw_math(display, (*args._VECTptr)[1],
               x + (fraction_width - denominator.width) / 2,
-              line_y + 1 + kFractionGap);
+              line_y + 1 + kFractionGap, level);
     return;
   }
 
-  MathLayout child = math_layout(args, display);
-  int32_t text_y = y + layout.axis - line_height / 2;
-  int32_t child_x = x + display->textWidth(op.c_str());
-  display->drawString(op.c_str(), x, text_y);
-  display->drawString("(", child_x, text_y);
-  child_x += display->textWidth("(");
-  draw_math(display, args, child_x,
-            y + layout.axis - child.axis);
-  display->drawString(")", child_x + child.width, text_y);
-}
-} // namespace
+  MathLayout child = math_layout(args, display, level);
+  set_font_for_level(display, level);
 
-void render_giac_ast(lgfx::LGFXBase *display, const giac::gen &root,
-                     int32_t x, int32_t y) {
+  int32_t text_y = y + layout.axis - line_height / 2;
+  display->drawString(op.c_str(), x, text_y);
+
+  // Gap between function name (e.g., sin) and '('
+  int32_t child_x = x + display->textWidth(op.c_str()) + kSideGap;
+  int32_t paren_w = get_paren_width(display, child.height, line_height);
+
+  // Exact top and height of the child content (with 1px vertical padding)
+  int32_t paren_y = y + layout.axis - child.axis - 1;
+  int32_t paren_h = child.height + 2;
+
+  // Render left parenthesis
+  if (child.height <= line_height) {
+    display->drawString("(", child_x, text_y);
+  } else {
+    draw_scaled_paren(display, child_x, paren_y, paren_h, paren_w, true);
+  }
+  child_x += paren_w;
+
+  draw_math(display, args, child_x, y + layout.axis - child.axis, level);
+
+  // Render right parenthesis
+  set_font_for_level(display, level);
+  if (child.height <= line_height) {
+    display->drawString(")", child_x + child.width, text_y);
+  } else {
+    draw_scaled_paren(display, child_x + child.width, paren_y, paren_h, paren_w,
+                      false);
+  }
+}
+} // namespace MathRenderer
+
+void render_giac_ast(lgfx::LGFXBase *display, MathFonts fontsinput,
+                     const giac::gen &root, int32_t x, int32_t y) {
   if (!display)
     return;
   display->setTextColor(TFT_WHITE);
   display->setTextDatum(lgfx::textdatum_t::top_left);
-  draw_math(display, root, x, y);
+  MathRenderer::fonts = fontsinput;
+  MathRenderer::current_root = &root; // STORE ROOT REFERENCE
+  MathRenderer::draw_math(display, root, x, y, 0);
 }
 
 void print_giac_ast_iterative(const giac::gen &root) {
@@ -356,11 +519,14 @@ giac::gen convert_inv_to_div(const giac::gen &node) {
       }
     }
 
-    // If we found any denominators, merge into a single fraction: (nums...) / (dens...)
+    // If we found any denominators, merge into a single fraction: (nums...) /
+    // (dens...)
     if (!dens.empty()) {
       giac::gen numerator =
-          nums.empty() ? giac::gen(1)
-                       : ((nums.size() == 1) ? nums[0] : giac::symbolic(giac::at_prod, nums));
+          nums.empty()
+              ? giac::gen(1)
+              : ((nums.size() == 1) ? nums[0]
+                                    : giac::symbolic(giac::at_prod, nums));
 
       giac::gen denominator =
           (dens.size() == 1) ? dens[0] : giac::symbolic(giac::at_prod, dens);
