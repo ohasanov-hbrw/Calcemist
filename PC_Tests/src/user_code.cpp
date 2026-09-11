@@ -29,10 +29,16 @@
 
 #include "giac_ast.hpp"
 
+#include "giac_cursor.hpp"
+
+
+
 LGFX lcd(320, 240);
 LGFX lcd2(135, 240);
 
 lgfx::LGFX_Sprite canvas(&lcd);
+
+MathRenderer::AstCursor cursor;
 
 const lgfx::U8g2font font7x13symbols(u8g2_font_7x13_m_symbols);
 const lgfx::U8g2font font7x13bold(u8g2_font_7x13B_tf);
@@ -236,6 +242,7 @@ void loop() {
       result = convert_inv_to_div(result);
       print_giac_ast_iterative(result);
       pretty_result = convert_inv_to_div(g);
+      cursor.setRoot(&pretty_result);
       has_pretty_result = true;
     } catch (const runtime_error &err) {
       for (char c : "ERROR: ") {
@@ -264,10 +271,12 @@ void loop() {
   if (key == KEY_LEFT){
     term.moveCursorLeft();
     //MathRenderer::move_cursor(Direction::LEFT);
+    cursor.move(Direction::LEFT);
   }
   if (key == KEY_RIGHT){
     term.moveCursorRight();
     //MathRenderer::move_cursor(Direction::RIGHT);
+    cursor.move(Direction::RIGHT);
   }
   if (key == KEY_UP)
     term.scroll(-1);

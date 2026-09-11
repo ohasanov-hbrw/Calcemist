@@ -12,7 +12,7 @@ struct StackNode {
     int depth;
 };
 
-enum class Direction { LEFT, RIGHT, UP, DOWN };
+
 
 struct MathFonts {
   const lgfx::IFont* main;
@@ -25,10 +25,6 @@ struct MathFonts {
     return nested_exponent;
   }
 };
-
-namespace MathRenderer {
-    void move_cursor(Direction dir);
-}
 
 
 void print_giac_ast_iterative(const giac::gen& root);

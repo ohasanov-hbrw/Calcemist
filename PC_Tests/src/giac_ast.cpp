@@ -8,69 +8,6 @@
 
 namespace MathRenderer {
 
-// Tracks node selection path through the AST
-static std::vector<size_t> cursor_path;
-static const giac::gen *current_root = nullptr;
-
-// Helper to get node reference from path
-const giac::gen *get_node_at_path(const giac::gen *node,
-                                  const std::vector<size_t> &path,
-                                  size_t depth = 0) {
-  if (!node || depth >= path.size())
-    return node;
-  if (node->type == giac::_SYMB) {
-    const giac::gen &args = node->_SYMBptr->feuille;
-    if (args.type == giac::_VECT && path[depth] < args._VECTptr->size()) {
-      return get_node_at_path(&(*args._VECTptr)[path[depth]], path, depth + 1);
-    }
-  }
-  return node;
-}
-
-void move_cursor(Direction dir) {
-  if (!current_root)
-    return;
-
-  if (cursor_path.empty()) {
-    cursor_path.push_back(0);
-    return;
-  }
-
-  switch (dir) {
-  case Direction::RIGHT:
-    cursor_path.back()++;
-    if (!get_node_at_path(current_root, cursor_path)) {
-      cursor_path.back()--; // Boundary check
-    }
-    break;
-
-  case Direction::LEFT:
-    if (cursor_path.back() > 0) {
-      cursor_path.back()--;
-    } else if (cursor_path.size() > 1) {
-      cursor_path.pop_back();
-    }
-    break;
-
-  case Direction::DOWN:
-    // Navigate into child node / denominator / base
-    cursor_path.push_back(1);
-    if (!get_node_at_path(current_root, cursor_path)) {
-      cursor_path.pop_back();
-    }
-    break;
-
-  case Direction::UP:
-    // Navigate into numerator / exponent or move up tree
-    if (cursor_path.back() > 0) {
-      cursor_path.back() = 0;
-    } else if (cursor_path.size() > 1) {
-      cursor_path.pop_back();
-    }
-    break;
-  }
-}
-
 struct MathLayout {
   int32_t width;
   int32_t height;
@@ -208,12 +145,6 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     std::string text = math_text(node);
     display->drawString(text.c_str(), x, y);
 
-    // // Render cursor if current node is targeted
-    // if (current_root && &node == get_node_at_path(current_root, cursor_path))
-    // {
-    //   int32_t text_w = display->textWidth(text.c_str());
-    //   display->drawFastVLine(x + text_w + 1, y, line_height, TFT_WHITE);
-    // }
 
     return;
   }
@@ -331,7 +262,6 @@ void render_giac_ast(lgfx::LGFXBase *display, MathFonts fontsinput,
   display->setTextColor(TFT_WHITE);
   display->setTextDatum(lgfx::textdatum_t::top_left);
   MathRenderer::fonts = fontsinput;
-  MathRenderer::current_root = &root; // STORE ROOT REFERENCE
   MathRenderer::draw_math(display, root, x, y, 0);
 }
 
