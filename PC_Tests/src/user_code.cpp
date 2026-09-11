@@ -290,7 +290,7 @@ void loop() {
 
   if (has_pretty_result) {
     MathFonts fonts{&font9x15symbols, &font7x13symbols, &font5x8normal};
-    render_giac_ast(&canvas, fonts, pretty_result, 8, 8);
+    render_giac_ast(&canvas, fonts, pretty_result, cursor, 8, 8);
   }
 
   canvas.pushSprite(0, 0);

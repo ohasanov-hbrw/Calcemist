@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "giac_cursor.hpp"
 
 namespace MathRenderer {
 
@@ -135,17 +136,20 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
 }
 
 void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
-               int32_t y, int32_t level = 0) {
+               int32_t y, int32_t level, const giac::gen *selected_node) {
   set_font_for_level(display, level);
   const int32_t line_height = display->fontHeight();
   const MathLayout layout = math_layout(node, display, level);
+
+  // If this node is the active cursor target, highlight its exact bounds
+  if (selected_node == &node) {
+    display->drawRect(x - 1, y - 1, layout.width + 2, layout.height + 2, TFT_YELLOW);
+  }
 
   if (node.type != giac::_SYMB) {
     set_font_for_level(display, level);
     std::string text = math_text(node);
     display->drawString(text.c_str(), x, y);
-
-
     return;
   }
 
@@ -167,9 +171,9 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     int32_t base_y = top_offset;
     int32_t exp_y = top_offset + exp_y_rel;
 
-    draw_math(display, base, x, y + base_y, level);
+    draw_math(display, base, x, y + base_y, level, selected_node);
     draw_math(display, exponent, x + base_layout.width + kPowGap, y + exp_y,
-              level + 1);
+              level + 1, selected_node);
     return;
   }
 
@@ -194,7 +198,7 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
             cursor += kMultiplicationWidth;
           }
         }
-        draw_math(display, term, cursor, y + layout.axis - child.axis, level);
+        draw_math(display, term, cursor, y + layout.axis - child.axis, level, selected_node);
         cursor += child.width;
       }
       return;
@@ -209,14 +213,14 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
         std::max(numerator.width, denominator.width) + kFractionWidth;
 
     draw_math(display, (*args._VECTptr)[0],
-              x + (fraction_width - numerator.width) / 2, y, level);
+              x + (fraction_width - numerator.width) / 2, y, level, selected_node);
 
     int32_t line_y = y + numerator.height + kFractionGap;
     display->drawLine(x, line_y, x + fraction_width - 1, line_y);
 
     draw_math(display, (*args._VECTptr)[1],
               x + (fraction_width - denominator.width) / 2,
-              line_y + 1 + kFractionGap, level);
+              line_y + 1 + kFractionGap, level, selected_node);
     return;
   }
 
@@ -226,15 +230,11 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
   int32_t text_y = y + layout.axis - line_height / 2;
   display->drawString(op.c_str(), x, text_y);
 
-  // Gap between function name (e.g., sin) and '('
   int32_t child_x = x + display->textWidth(op.c_str()) + kSideGap;
   int32_t paren_w = get_paren_width(display, child.height, line_height);
-
-  // Exact top and height of the child content (with 1px vertical padding)
   int32_t paren_y = y + layout.axis - child.axis - 1;
   int32_t paren_h = child.height + 2;
 
-  // Render left parenthesis
   if (child.height <= line_height) {
     display->drawString("(", child_x, text_y);
   } else {
@@ -242,9 +242,8 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
   }
   child_x += paren_w;
 
-  draw_math(display, args, child_x, y + layout.axis - child.axis, level);
+  draw_math(display, args, child_x, y + layout.axis - child.axis, level, selected_node);
 
-  // Render right parenthesis
   set_font_for_level(display, level);
   if (child.height <= line_height) {
     display->drawString(")", child_x + child.width, text_y);
@@ -256,13 +255,17 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
 } // namespace MathRenderer
 
 void render_giac_ast(lgfx::LGFXBase *display, MathFonts fontsinput,
-                     const giac::gen &root, int32_t x, int32_t y) {
+                     const giac::gen &root, const MathRenderer::AstCursor &cursor,
+                     int32_t x, int32_t y) {
   if (!display)
     return;
   display->setTextColor(TFT_WHITE);
   display->setTextDatum(lgfx::textdatum_t::top_left);
   MathRenderer::fonts = fontsinput;
-  MathRenderer::draw_math(display, root, x, y, 0);
+
+  // Retrieve current active target pointer and forward to recursive renderer
+  const giac::gen *selected_node = cursor.getCurrentNode();
+  MathRenderer::draw_math(display, root, x, y, 0, selected_node);
 }
 
 void print_giac_ast_iterative(const giac::gen &root) {
