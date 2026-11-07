@@ -98,6 +98,38 @@ int readKeyNonBlockingSDL() {
       return KEY_LEFT;
     case SDLK_RIGHT:
       return KEY_RIGHT;
+    case SDLK_KP_DIVIDE:
+      return '/';
+    case SDLK_KP_MULTIPLY:
+      return '*';
+    case SDLK_KP_MINUS:
+      return '-';
+    case SDLK_KP_PLUS:
+      return '+';
+    case SDLK_KP_1:
+      return '1';
+    case SDLK_KP_2:
+      return '2';
+    case SDLK_KP_3:
+      return '3';
+    case SDLK_KP_4:
+      return '4';
+    case SDLK_KP_5:
+      return '5';
+    case SDLK_KP_6:
+      return '6';
+    case SDLK_KP_7:
+      return '7';
+    case SDLK_KP_8:
+      return '8';
+    case SDLK_KP_9:
+      return '9';
+    case SDLK_KP_0:
+      return '0';
+    case SDLK_KP_PERIOD:
+      return '.';
+    case SDLK_KP_ENTER:
+      return 10;
     default:
       break;
     }
