@@ -273,6 +273,17 @@ void loop() {
       std::cout << "output: " << std::endl;
       result = convert_inv_to_div(result);
       print_giac_ast_iterative(result);
+
+      std::string out = result.print(&ct);
+      for (char c : out) {
+        if (c == '\r' || c == '\n')
+          term.enter();
+        else
+          term.addChar(c);
+      }
+      if (out.empty() || out.back() != '\n')
+        term.enter();
+
       pretty_result = convert_inv_to_div(g);
       cursor.setRoot(&pretty_result);
       has_pretty_result = true;

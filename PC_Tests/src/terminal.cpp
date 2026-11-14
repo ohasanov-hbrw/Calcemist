@@ -93,11 +93,14 @@ int Terminal::getCursorIndex() {
 }
 
 void Terminal::scroll(int8_t amount) {
-  if (amount < 0 && p_screen_offset >= -amount)
-    p_screen_offset += amount;
-  if (amount > 0 && p_screen_offset <= p_max_lines - amount &&
-      p_cursor >= p_chars_per_line * (p_lines_per_screen + p_screen_offset))
-    p_screen_offset += amount;
+  if (amount < 0) {
+    uint8_t dec = (uint8_t)(-amount);
+    p_screen_offset = (p_screen_offset >= dec) ? (p_screen_offset - dec) : 0;
+  } else if (amount > 0) {
+    uint16_t max_off = (p_max_lines > p_lines_per_screen) ? (p_max_lines - p_lines_per_screen) : 0;
+    uint16_t next = (uint16_t)p_screen_offset + (uint8_t)amount;
+    p_screen_offset = (next <= max_off) ? (uint8_t)next : (uint8_t)max_off;
+  }
 }
 
 void Terminal::setCursor(int idx) {
@@ -105,16 +108,26 @@ void Terminal::setCursor(int idx) {
 }
 
 void Terminal::moveCursorLeft() {
-  if (p_cursor == 0 || readCharFlags(p_cursor) & FLAGS_IMMUNE)
+  if (p_cursor == 0 || readCharFlags(p_cursor - 1) & FLAGS_IMMUNE)
     return;
   p_cursor--;
+  uint16_t cursor_line = p_cursor / p_chars_per_line;
+  if (cursor_line < p_screen_offset)
+    p_screen_offset = cursor_line;
 }
 
 void Terminal::moveCursorRight() {
-  if (p_cursor + 1 > (p_chars_per_line * p_max_lines) ||
-      readCharFlags(p_cursor) & FLAGS_IMMUNE)
+  if (p_cursor + 1 >= (p_chars_per_line * p_max_lines))
+    return;
+  // Do not leave current input: stop at end of content or before immune region
+  if ((p_char_buffer[p_cursor] & 0x00FF) == 0)
+    return;
+  if (readCharFlags(p_cursor) & FLAGS_IMMUNE)
     return;
   p_cursor++;
+  uint16_t cursor_line = p_cursor / p_chars_per_line;
+  while (cursor_line >= p_screen_offset + p_lines_per_screen && p_screen_offset + p_lines_per_screen < p_max_lines)
+    p_screen_offset++;
 }
 
 void Terminal::backspace() {

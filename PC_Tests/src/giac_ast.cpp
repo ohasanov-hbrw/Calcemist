@@ -15,12 +15,47 @@ struct MathLayout {
   int32_t axis;
 };
 
-constexpr int32_t kMathGap = 4;
-constexpr int32_t kFractionGap = 3;
-constexpr int32_t kFractionWidth = 10;
-constexpr int32_t kMultiplicationWidth = 7;
-constexpr int32_t kSideGap = kMathGap / 2; // 2px left, 2px right
-constexpr int32_t kPowGap = 2;             // Spacing between base and exponent
+// Flash-resident layout metrics (tunable per font/size). Keep in .rodata/flash.
+struct MathConstants {
+  int32_t math_gap;
+  int32_t fraction_gap;
+  int32_t fraction_pad;
+  int32_t fraction_rule_thickness;
+  int32_t multiplication_width;
+  int32_t side_gap;
+  int32_t pow_gap;
+  int32_t radical_gap;
+  int32_t radical_rule_thickness;
+  int32_t radical_hook_width;
+  int32_t radical_hook_depth;
+  int32_t radical_inner_pad;
+  int32_t radical_outer_pad;
+  int32_t paren_stroke_width;
+};
+
+static constexpr MathConstants kMath = {
+    4,  // math_gap
+    3,  // fraction_gap
+    10, // fraction_pad
+    1,  // fraction_rule_thickness
+    7,  // multiplication_width
+    2,  // side_gap
+    2,  // pow_gap
+    2,  // radical_gap (between overbar and radicand)
+    1,  // radical_rule_thickness
+    4,  // radical_hook_width
+    3,  // radical_hook_depth
+    2,  // radical_inner_pad (space inside radical before/after radicand)
+    1,  // radical_outer_pad (extra width at right of overbar)
+    1   // paren_stroke_width
+};
+
+constexpr int32_t kMathGap = kMath.math_gap;
+constexpr int32_t kFractionGap = kMath.fraction_gap;
+constexpr int32_t kFractionWidth = kMath.fraction_pad;
+constexpr int32_t kMultiplicationWidth = kMath.multiplication_width;
+constexpr int32_t kSideGap = kMath.side_gap;
+constexpr int32_t kPowGap = kMath.pow_gap;
 
 static MathFonts fonts;
 
@@ -71,8 +106,46 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
 
   if (symbolic->sommet == giac::at_pow && args.type == giac::_VECT &&
       args._VECTptr->size() == 2) {
-    MathLayout base = math_layout((*args._VECTptr)[0], display, level);
-    MathLayout exponent = math_layout((*args._VECTptr)[1], display, level + 1);
+    const giac::gen &base_g = (*args._VECTptr)[0];
+    const giac::gen &exp_g = (*args._VECTptr)[1];
+    bool is_sqrt_pow = false;
+    // sqrt can be represented as pow(x, 1/2)
+    auto is_half_gen = [](const giac::gen &e) -> bool {
+      if (e.type == giac::_FRAC && e._FRACptr &&
+          e._FRACptr->num == 1 && e._FRACptr->den == 2) {
+        return true;
+      }
+      if (e.type == giac::_DOUBLE_ && e._DOUBLE_val == 0.5) {
+        return true;
+      }
+      if (e.type == giac::_SYMB && e._SYMBptr &&
+          e._SYMBptr->sommet == giac::at_inv &&
+          e._SYMBptr->feuille == giac::gen(2)) {
+        return true;
+      }
+      // symbolic division: 1/2 often becomes at_div/"/" node with vecteur [1,2]
+      if (e.type == giac::_SYMB && e._SYMBptr && e._SYMBptr->feuille.type == giac::_VECT) {
+        std::string eop = e._SYMBptr->sommet.ptr()->print(giac::context0);
+        const giac::vecteur *v = e._SYMBptr->feuille._VECTptr;
+        if (v && v->size() == 2 && eop == "/") {
+          if ((*v)[0] == giac::gen(1) && (*v)[1] == giac::gen(2)) return true;
+        }
+      }
+      return false;
+    };
+    is_sqrt_pow = is_half_gen(exp_g);
+    if (is_sqrt_pow) {
+      MathLayout rad = math_layout(base_g, display, level);
+      int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
+      int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+      int32_t width = hook_w + kMath.radical_inner_pad + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
+      int32_t height = rad.height + over;
+      int32_t axis = over + rad.axis;
+      return {width, height, axis};
+    }
+
+    MathLayout base = math_layout(base_g, display, level);
+    MathLayout exponent = math_layout(exp_g, display, level + 1);
 
     // Keep exponent bottom near the top of the base (capped at 3px from top
     // edge)
@@ -118,7 +191,48 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
     MathLayout denominator = math_layout((*args._VECTptr)[1], display, level);
     int32_t axis = numerator.height + kFractionGap;
     return {std::max(numerator.width, denominator.width) + kFractionWidth,
-            axis + 1 + kFractionGap + denominator.height, axis};
+            axis + kMath.fraction_rule_thickness + kFractionGap + denominator.height, axis};
+  }
+
+  // Square root: sqrt(x) -> radical over x
+  if (symbolic->sommet == giac::at_sqrt || op == "sqrt" || op == "√") {
+    MathLayout rad = math_layout(args, display, level);
+    int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
+    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t width = hook_w + kMath.radical_inner_pad + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
+    int32_t height = rad.height + over;
+    int32_t axis = over + rad.axis;
+    return {width, height, axis};
+  }
+
+  // N-th root: surd/root often represented as root(x,n) or similar 2-arg form
+  if ((op == "root" || op == "surd" || op == "NTHROOT") && args.type == giac::_VECT &&
+      args._VECTptr->size() == 2) {
+    MathLayout rad = math_layout((*args._VECTptr)[0], display, level);
+    MathLayout idx = math_layout((*args._VECTptr)[1], display, std::min(level + 1, 2));
+    int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
+    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t rad_body_h = rad.height + over;
+    // Anchor index to the hook corner; allow it to extend above the radical body.
+    int32_t hook_anchor_from_top = over + std::max(2, (rad.height * 2) / 3);
+    int32_t idx_y_rel = hook_anchor_from_top - idx.height - 1; // 1px up
+    int32_t top_extra = (idx_y_rel < 0) ? -idx_y_rel : 0;
+    int32_t idx_y_placed = idx_y_rel + top_extra;
+    int32_t index_offset = std::max(0, idx.width - 1);
+    int32_t width = index_offset + hook_w + kMath.radical_inner_pad + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
+    int32_t height = top_extra + rad_body_h;
+    int32_t bottom_extent = std::max(top_extra + rad_body_h, idx_y_placed + idx.height);
+    height = std::max(height, bottom_extent);
+    int32_t axis = top_extra + over + rad.axis;
+    return {width, height, axis};
+  }
+
+  // Absolute value: abs(x)
+  if (symbolic->sommet == giac::at_abs) {
+    MathLayout child = math_layout(args, display, level);
+    int32_t bar_w = std::max(2, line_height / 8);
+    int32_t pad = 1;
+    return {child.width + 2 * (bar_w + pad), child.height, child.axis};
   }
 
   MathLayout child = math_layout(args, display, level);
@@ -160,6 +274,47 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
       args._VECTptr->size() == 2) {
     const giac::gen &base = (*args._VECTptr)[0];
     const giac::gen &exponent = (*args._VECTptr)[1];
+    bool is_sqrt_pow = false;
+    auto is_half_gen = [](const giac::gen &e) -> bool {
+      if (e.type == giac::_FRAC && e._FRACptr &&
+          e._FRACptr->num == 1 && e._FRACptr->den == 2) {
+        return true;
+      }
+      if (e.type == giac::_DOUBLE_ && e._DOUBLE_val == 0.5) {
+        return true;
+      }
+      if (e.type == giac::_SYMB && e._SYMBptr &&
+          e._SYMBptr->sommet == giac::at_inv &&
+          e._SYMBptr->feuille == giac::gen(2)) {
+        return true;
+      }
+      if (e.type == giac::_SYMB && e._SYMBptr && e._SYMBptr->feuille.type == giac::_VECT) {
+        std::string eop = e._SYMBptr->sommet.ptr()->print(giac::context0);
+        const giac::vecteur *v = e._SYMBptr->feuille._VECTptr;
+        if (v && v->size() == 2 && eop == "/") {
+          if ((*v)[0] == giac::gen(1) && (*v)[1] == giac::gen(2)) return true;
+        }
+      }
+      return false;
+    };
+    is_sqrt_pow = is_half_gen(exponent);
+    if (is_sqrt_pow) {
+      MathLayout rad = math_layout(base, display, level);
+      int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
+      int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+      int32_t rad_x = x + hook_w + kMath.radical_inner_pad;
+      int32_t rad_y = y + over;
+      int32_t vinc_y = y;
+      int32_t base_y_line = y + layout.height - 1;
+      int32_t hook_x = x;
+      int32_t mid_y = std::min(base_y_line - 1, vinc_y + std::max(2, (layout.height * 2) / 3));
+      int32_t overbar_end = rad_x + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
+      display->drawLine(hook_x, mid_y - 2, hook_x + hook_w / 2, base_y_line);
+      display->drawLine(hook_x + hook_w / 2, base_y_line, hook_x + hook_w, vinc_y);
+      display->drawLine(hook_x + hook_w, vinc_y, overbar_end, vinc_y);
+      draw_math(display, base, rad_x, rad_y, level, selected_node);
+      return;
+    }
 
     MathLayout base_layout = math_layout(base, display, level);
     MathLayout exp_layout = math_layout(exponent, display, level + 1);
@@ -221,6 +376,75 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     draw_math(display, (*args._VECTptr)[1],
               x + (fraction_width - denominator.width) / 2,
               line_y + 1 + kFractionGap, level, selected_node);
+    return;
+  }
+
+  if (symbolic->sommet == giac::at_sqrt || op == "sqrt") {
+    MathLayout rad = math_layout(args, display, level);
+    int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
+    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t rad_x = x + hook_w + kMath.radical_inner_pad;
+    int32_t rad_y = y + over;
+    int32_t vinc_y = y;
+    int32_t base_y = y + layout.height - 1;
+    int32_t hook_x = x;
+    int32_t mid_y = std::min(base_y - 1, vinc_y + std::max(2, (layout.height * 2) / 3));
+    int32_t overbar_end = rad_x + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
+    // radical sign: downstroke, upstroke, overbar
+    display->drawLine(hook_x, mid_y - 2, hook_x + hook_w / 2, base_y, TFT_WHITE);
+    display->drawLine(hook_x + hook_w / 2, base_y, hook_x + hook_w, vinc_y, TFT_WHITE);
+    display->drawLine(hook_x + hook_w, vinc_y, overbar_end, vinc_y, TFT_WHITE);
+    draw_math(display, args, rad_x, rad_y, level, selected_node);
+    return;
+  }
+
+  if ((op == "root" || op == "surd" || op == "NTHROOT") && args.type == giac::_VECT &&
+      args._VECTptr->size() == 2) {
+    const giac::gen &radicand = (*args._VECTptr)[0];
+    const giac::gen &index = (*args._VECTptr)[1];
+    MathLayout rad = math_layout(radicand, display, level);
+    MathLayout idx = math_layout(index, display, std::min(level + 1, 2));
+    int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
+    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t rad_body_h = rad.height + over;
+    // Anchor index to the hook corner; allow it to extend above the radical body.
+    int32_t hook_anchor_from_top = over + std::max(2, (rad.height * 2) / 3);
+    int32_t idx_y_rel = hook_anchor_from_top - idx.height - 1; // 1px up
+    int32_t top_extra = (idx_y_rel < 0) ? -idx_y_rel : 0;
+    int32_t index_offset = std::max(0, idx.width - 1);
+    int32_t hook_x = x + index_offset;
+    int32_t rad_x = hook_x + hook_w + kMath.radical_inner_pad;
+    int32_t rad_y = y + top_extra + over;
+    int32_t vinc_y = y + top_extra;
+    int32_t base_y = y + top_extra + rad_body_h - 1;
+    int32_t mid_y = vinc_y + hook_anchor_from_top;
+    if (mid_y > base_y - 1) mid_y = base_y - 1;
+    int32_t overbar_end = rad_x + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
+    // draw index tucked near the radical tail/corner (may extend above radical body)
+    int32_t idx_x = hook_x - idx.width + 1;
+    int32_t idx_y = y + idx_y_rel + top_extra;
+    draw_math(display, index, idx_x, idx_y, std::min(level + 1, 2), selected_node);
+    // radical sign
+    display->drawLine(hook_x, mid_y - 2, hook_x + hook_w / 2, base_y, TFT_WHITE);
+    display->drawLine(hook_x + hook_w / 2, base_y, hook_x + hook_w, vinc_y, TFT_WHITE);
+    display->drawLine(hook_x + hook_w, vinc_y, overbar_end, vinc_y, TFT_WHITE);
+    draw_math(display, radicand, rad_x, rad_y, level, selected_node);
+    return;
+  }
+
+  if (symbolic->sommet == giac::at_abs) {
+    MathLayout child = math_layout(args, display, level);
+    int32_t bar_w = std::max(2, line_height / 8);
+    int32_t pad = 1;
+    int32_t bar_h = layout.height;
+    int32_t child_x = x + bar_w + pad;
+    // vertical bars
+    display->drawLine(x, y, x, y + bar_h - 1);
+    if (bar_w > 1) display->drawLine(x + 1, y, x + 1, y + bar_h - 1);
+    draw_math(display, args, child_x, y + layout.axis - child.axis, level, selected_node);
+    int32_t rx = x + layout.width - bar_w;
+    display->drawLine(rx, y, rx, y + bar_h - 1);
+    if (bar_w > 1) display->drawLine(rx + 1, y, rx + 1, y + bar_h - 1);
     return;
   }
 
