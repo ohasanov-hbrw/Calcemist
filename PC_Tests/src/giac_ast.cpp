@@ -60,6 +60,7 @@ constexpr int32_t kPowGap = kMath.pow_gap;
 static MathFonts fonts;
 
 std::string math_text(const giac::gen &node) {
+  if (node == giac::cst_pi) return "\xCF\x80"; // π (UTF-8)
   return node.print(giac::context0);
 }
 
@@ -67,38 +68,160 @@ void set_font_for_level(lgfx::LGFXBase *display, int32_t level) {
   display->setFont(fonts.get(level));
 }
 
-int32_t get_paren_width(lgfx::LGFXBase *display, int32_t child_height,
-                        int32_t line_height) {
-  if (child_height <= line_height) {
-    return display->textWidth("(");
-  }
-  return 5; // Width for scaled vector parenthesis
+bool is_pi_node(const giac::gen &node) {
+  return node == giac::cst_pi;
 }
 
+void set_font_for_node(lgfx::LGFXBase *display, int32_t level, const giac::gen &node) {
+  (void)node;
+  // Always use the font for this level (CW and small kept separate).
+  set_font_for_level(display, level);
+}
+
+std::string math_leaf_text(const giac::gen &node, lgfx::LGFXBase *display, int32_t level) {
+  if (is_pi_node(node)) {
+    // Same-font fallback: prefer π glyph in this level's font, else "pi" text in the same font.
+    set_font_for_level(display, level);
+    const char *pi = "\xCF\x80";
+    if (display->textWidth(pi) > 0) return pi;
+    return "pi";
+  }
+  return math_text(node);
+}
+
+int32_t math_stroke(lgfx::LGFXBase *display, int32_t level) {
+  // Dynamic stroke thickness based on the font for the given level.
+  set_font_for_level(display, level);
+  //int32_t h = display->fontHeight();
+  //int32_t s = h / 6; // ~2px for ~14px ClassWiz fonts, 1px for small fonts
+  //if (s < 1) s = 1;
+  return level <= 0 ? 2 : 1;
+}
+
+void draw_math_hline(lgfx::LGFXBase *display, int32_t x0, int32_t x1, int32_t y, int32_t stroke, uint32_t color) {
+  if (x1 < x0) std::swap(x0, x1);
+  int32_t half = stroke / 2;
+  display->fillRect(x0, y - half, x1 - x0 + 1, stroke, color);
+}
+
+void draw_math_vline(lgfx::LGFXBase *display, int32_t x, int32_t y0, int32_t y1, int32_t stroke, uint32_t color) {
+  if (y1 < y0) std::swap(y0, y1);
+  int32_t half = stroke / 2;
+  display->fillRect(x - half, y0, stroke, y1 - y0 + 1, color);
+}
+
+void draw_math_line(lgfx::LGFXBase *display, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t stroke, uint32_t color) {
+  if (stroke <= 1) {
+    display->drawLine(x0, y0, x1, y1, color);
+    return;
+  }
+  // Approximate thickness for diagonals by drawing parallel lines.
+  int32_t dx = x1 - x0;
+  int32_t dy = y1 - y0;
+  if (dx == 0) { draw_math_vline(display, x0, y0, y1, stroke, color); return; }
+  if (dy == 0) { draw_math_hline(display, x0, x1, y0, stroke, color); return; }
+  int32_t ox = 0, oy = 0;
+  if (std::abs(dx) >= std::abs(dy)) oy = 1; else ox = 1;
+  int32_t start = -(stroke / 2);
+  for (int32_t i = 0; i < stroke; ++i) {
+    int32_t off = start + i;
+    display->drawLine(x0 + ox * off, y0 + oy * off, x1 + ox * off, y1 + oy * off, color);
+  }
+}
+
+int32_t get_paren_width(lgfx::LGFXBase *display, int32_t child_height,
+                        int32_t line_height, int32_t level) {
+  if (child_height <= line_height) {
+    set_font_for_level(display, level);
+    return display->textWidth("(");
+  }
+  return std::max(5, math_stroke(display, level) * 2 + 1); // Width for scaled vector parenthesis
+}
+
+bool is_sum_node(const giac::gen &node) {
+  return node.type == giac::_SYMB && node._SYMBptr &&
+         node._SYMBptr->sommet == giac::at_plus;
+}
+
+bool needs_parens_in_product(const giac::gen &node) {
+  return is_sum_node(node);
+}
+
+MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display, int32_t level = 0);
+void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
+               int32_t y, int32_t level, const giac::gen *selected_node);
 void draw_scaled_paren(lgfx::LGFXBase *display, int32_t x, int32_t y_top,
-                       int32_t height, int32_t width, bool is_left) {
+                       int32_t height, int32_t width, bool is_left, int32_t level);
+
+void draw_scaled_paren(lgfx::LGFXBase *display, int32_t x, int32_t y_top,
+                       int32_t height, int32_t width, bool is_left, int32_t level) {
   int32_t y_bot = y_top + height - 1;
   int32_t bend = std::clamp(height / 6, 2, width);
+  int32_t stroke = math_stroke(display, level);
 
   if (is_left) {
-    display->drawLine(x + width - 1, y_top, x, y_top + bend);
-    display->drawLine(x, y_top + bend, x, y_bot - bend);
-    display->drawLine(x, y_bot - bend, x + width - 1, y_bot);
+    draw_math_line(display, x + width - 1, y_top, x, y_top + bend, stroke, TFT_WHITE);
+    draw_math_vline(display, x, y_top + bend, y_bot - bend, stroke, TFT_WHITE);
+    draw_math_line(display, x, y_bot - bend, x + width - 1, y_bot, stroke, TFT_WHITE);
   } else {
-    display->drawLine(x, y_top, x + width - 1, y_top + bend);
-    display->drawLine(x + width - 1, y_top + bend, x + width - 1, y_bot - bend);
-    display->drawLine(x + width - 1, y_bot - bend, x, y_bot);
+    draw_math_line(display, x, y_top, x + width - 1, y_top + bend, stroke, TFT_WHITE);
+    draw_math_vline(display, x + width - 1, y_top + bend, y_bot - bend, stroke, TFT_WHITE);
+    draw_math_line(display, x + width - 1, y_bot - bend, x, y_bot, stroke, TFT_WHITE);
+  }
+}
+
+MathLayout math_layout_with_parens_if(const giac::gen &node, lgfx::LGFXBase *display,
+                                      int32_t level, bool wrap) {
+  MathLayout child = math_layout(node, display, level);
+  if (!wrap) return child;
+  set_font_for_level(display, level);
+  int32_t lh = display->fontHeight();
+  int32_t pw = get_paren_width(display, child.height, lh, level);
+  int32_t axis = std::max(lh / 2, child.axis);
+  int32_t below = std::max(lh - lh / 2, child.height - child.axis);
+  return {child.width + pw * 2, axis + below, axis};
+}
+
+void draw_with_parens_if(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
+                         int32_t y, int32_t level, const giac::gen *selected_node, bool wrap) {
+  if (!wrap) {
+    draw_math(display, node, x, y, level, selected_node);
+    return;
+  }
+  set_font_for_level(display, level);
+  const int32_t lh = display->fontHeight();
+  MathLayout child = math_layout(node, display, level);
+  MathLayout box = math_layout_with_parens_if(node, display, level, true);
+  int32_t text_y = y + box.axis - lh / 2;
+  int32_t paren_w = get_paren_width(display, child.height, lh, level);
+  int32_t child_x = x + paren_w;
+  int32_t child_y = y + box.axis - child.axis;
+  int32_t paren_y = child_y - 1;
+  int32_t paren_h = child.height + 2;
+  if (child.height <= lh) {
+    display->drawString("(", x, text_y);
+  } else {
+    draw_scaled_paren(display, x, paren_y, paren_h, paren_w, true, level);
+  }
+  draw_math(display, node, child_x, child_y, level, selected_node);
+  set_font_for_level(display, level);
+  if (child.height <= lh) {
+    display->drawString(")", child_x + child.width, text_y);
+  } else {
+    draw_scaled_paren(display, child_x + child.width, paren_y, paren_h, paren_w, false, level);
   }
 }
 
 MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
-                       int32_t level = 0) {
+                       int32_t level) {
   set_font_for_level(display, level);
   const int32_t line_height = display->fontHeight();
 
   if (node.type != giac::_SYMB) {
-    return {display->textWidth(math_text(node).c_str()), line_height,
-            line_height / 2};
+    std::string text = math_leaf_text(node, display, level);
+    set_font_for_level(display, level);
+    return {display->textWidth(text.c_str()), display->fontHeight(),
+            display->fontHeight() / 2};
   }
 
   const giac::symbolic *symbolic = node._SYMBptr;
@@ -136,8 +259,9 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
     is_sqrt_pow = is_half_gen(exp_g);
     if (is_sqrt_pow) {
       MathLayout rad = math_layout(base_g, display, level);
+      int32_t stroke = math_stroke(display, level);
       int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
-      int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+      int32_t over = stroke + kMath.radical_gap;
       int32_t width = hook_w + kMath.radical_inner_pad + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
       int32_t height = rad.height + over;
       int32_t axis = over + rad.axis;
@@ -173,7 +297,8 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
 
     if (terms) {
       for (size_t i = 0; i < terms->size(); ++i) {
-        MathLayout child = math_layout((*terms)[i], display, level);
+        bool wrap = (symbolic->sommet == giac::at_prod) && needs_parens_in_product((*terms)[i]);
+        MathLayout child = math_layout_with_parens_if((*terms)[i], display, level, wrap);
         int32_t separator_width = symbolic->sommet == giac::at_plus
                                       ? display->textWidth("+") + kMathGap
                                       : kMultiplicationWidth;
@@ -189,29 +314,37 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
   if (op == "/" && args.type == giac::_VECT && args._VECTptr->size() == 2) {
     MathLayout numerator = math_layout((*args._VECTptr)[0], display, level);
     MathLayout denominator = math_layout((*args._VECTptr)[1], display, level);
+    int32_t stroke = math_stroke(display, level);
     int32_t axis = numerator.height + kFractionGap;
     return {std::max(numerator.width, denominator.width) + kFractionWidth,
-            axis + kMath.fraction_rule_thickness + kFractionGap + denominator.height, axis};
+            axis + stroke + kFractionGap + denominator.height, axis};
   }
 
   // Square root: sqrt(x) -> radical over x
   if (symbolic->sommet == giac::at_sqrt || op == "sqrt" || op == "√") {
     MathLayout rad = math_layout(args, display, level);
+    int32_t stroke = math_stroke(display, level);
     int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
-    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t over = stroke + kMath.radical_gap;
     int32_t width = hook_w + kMath.radical_inner_pad + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
     int32_t height = rad.height + over;
     int32_t axis = over + rad.axis;
     return {width, height, axis};
   }
 
-  // N-th root: surd/root often represented as root(x,n) or similar 2-arg form
+  // N-th root: Giac root/NTHROOT: (index, radicand) e.g. root(3,8)=8^(1/3); surd: (radicand, index)
   if ((op == "root" || op == "surd" || op == "NTHROOT") && args.type == giac::_VECT &&
       args._VECTptr->size() == 2) {
-    MathLayout rad = math_layout((*args._VECTptr)[0], display, level);
-    MathLayout idx = math_layout((*args._VECTptr)[1], display, std::min(level + 1, 2));
+    const giac::gen &a0 = (*args._VECTptr)[0];
+    const giac::gen &a1 = (*args._VECTptr)[1];
+    bool index_first = (op == "root" || op == "NTHROOT");
+    const giac::gen &radicand_g = index_first ? a1 : a0;
+    const giac::gen &index_g = index_first ? a0 : a1;
+    MathLayout rad = math_layout(radicand_g, display, level);
+    MathLayout idx = math_layout(index_g, display, std::min(level + 1, 2));
+    int32_t stroke = math_stroke(display, level);
     int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
-    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t over = stroke + kMath.radical_gap;
     int32_t rad_body_h = rad.height + over;
     // Anchor index to the hook corner; allow it to extend above the radical body.
     int32_t hook_anchor_from_top = over + std::max(2, (rad.height * 2) / 3);
@@ -230,7 +363,8 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
   // Absolute value: abs(x)
   if (symbolic->sommet == giac::at_abs) {
     MathLayout child = math_layout(args, display, level);
-    int32_t bar_w = std::max(2, line_height / 8);
+    int32_t stroke = math_stroke(display, level);
+    int32_t bar_w = std::max(2, stroke);
     int32_t pad = 1;
     return {child.width + 2 * (bar_w + pad), child.height, child.axis};
   }
@@ -243,7 +377,7 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
   int32_t below_axis =
       std::max(line_height - text_axis, child.height - child.axis);
 
-  int32_t paren_w = get_paren_width(display, child.height, line_height);
+  int32_t paren_w = get_paren_width(display, child.height, line_height, level);
 
   return {op_width + kSideGap + child.width + (paren_w * 2), axis + below_axis,
           axis};
@@ -261,8 +395,8 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
   }
 
   if (node.type != giac::_SYMB) {
+    std::string text = math_leaf_text(node, display, level);
     set_font_for_level(display, level);
-    std::string text = math_text(node);
     display->drawString(text.c_str(), x, y);
     return;
   }
@@ -300,8 +434,10 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     is_sqrt_pow = is_half_gen(exponent);
     if (is_sqrt_pow) {
       MathLayout rad = math_layout(base, display, level);
+      set_font_for_level(display, level);
+      int32_t stroke = math_stroke(display, level);
       int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
-      int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+      int32_t over = stroke + kMath.radical_gap;
       int32_t rad_x = x + hook_w + kMath.radical_inner_pad;
       int32_t rad_y = y + over;
       int32_t vinc_y = y;
@@ -309,9 +445,9 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
       int32_t hook_x = x;
       int32_t mid_y = std::min(base_y_line - 1, vinc_y + std::max(2, (layout.height * 2) / 3));
       int32_t overbar_end = rad_x + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
-      display->drawLine(hook_x, mid_y - 2, hook_x + hook_w / 2, base_y_line);
-      display->drawLine(hook_x + hook_w / 2, base_y_line, hook_x + hook_w, vinc_y);
-      display->drawLine(hook_x + hook_w, vinc_y, overbar_end, vinc_y);
+      draw_math_line(display, hook_x, mid_y - 2, hook_x + hook_w / 2, base_y_line, stroke, TFT_WHITE);
+      draw_math_line(display, hook_x + hook_w / 2, base_y_line, hook_x + hook_w, vinc_y, stroke, TFT_WHITE);
+      draw_math_hline(display, hook_x + hook_w, overbar_end, vinc_y, stroke, TFT_WHITE);
       draw_math(display, base, rad_x, rad_y, level, selected_node);
       return;
     }
@@ -339,7 +475,8 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
 
       for (size_t i = 0; i < args._VECTptr->size(); ++i) {
         const giac::gen &term = (*args._VECTptr)[i];
-        MathLayout child = math_layout(term, display, level);
+        bool wrap = (symbolic->sommet == giac::at_prod) && needs_parens_in_product(term);
+        MathLayout child = math_layout_with_parens_if(term, display, level, wrap);
 
         if (i) {
           set_font_for_level(display, level);
@@ -353,7 +490,7 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
             cursor += kMultiplicationWidth;
           }
         }
-        draw_math(display, term, cursor, y + layout.axis - child.axis, level, selected_node);
+        draw_with_parens_if(display, term, cursor, y + layout.axis - child.axis, level, selected_node, wrap);
         cursor += child.width;
       }
       return;
@@ -371,7 +508,8 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
               x + (fraction_width - numerator.width) / 2, y, level, selected_node);
 
     int32_t line_y = y + numerator.height + kFractionGap;
-    display->drawLine(x, line_y, x + fraction_width - 1, line_y);
+    set_font_for_level(display, level);
+    draw_math_hline(display, x, x + fraction_width - 1, line_y, math_stroke(display, level), TFT_WHITE);
 
     draw_math(display, (*args._VECTptr)[1],
               x + (fraction_width - denominator.width) / 2,
@@ -379,10 +517,12 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     return;
   }
 
-  if (symbolic->sommet == giac::at_sqrt || op == "sqrt") {
+  if (symbolic->sommet == giac::at_sqrt || op == "sqrt" || op == "√") {
     MathLayout rad = math_layout(args, display, level);
+    set_font_for_level(display, level);
+    int32_t stroke = math_stroke(display, level);
     int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
-    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t over = stroke + kMath.radical_gap;
     int32_t rad_x = x + hook_w + kMath.radical_inner_pad;
     int32_t rad_y = y + over;
     int32_t vinc_y = y;
@@ -391,21 +531,25 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     int32_t mid_y = std::min(base_y - 1, vinc_y + std::max(2, (layout.height * 2) / 3));
     int32_t overbar_end = rad_x + rad.width + kMath.radical_inner_pad + kMath.radical_outer_pad;
     // radical sign: downstroke, upstroke, overbar
-    display->drawLine(hook_x, mid_y - 2, hook_x + hook_w / 2, base_y, TFT_WHITE);
-    display->drawLine(hook_x + hook_w / 2, base_y, hook_x + hook_w, vinc_y, TFT_WHITE);
-    display->drawLine(hook_x + hook_w, vinc_y, overbar_end, vinc_y, TFT_WHITE);
+    draw_math_line(display, hook_x, mid_y - 2, hook_x + hook_w / 2, base_y, stroke, TFT_WHITE);
+    draw_math_line(display, hook_x + hook_w / 2, base_y, hook_x + hook_w, vinc_y, stroke, TFT_WHITE);
+    draw_math_hline(display, hook_x + hook_w, overbar_end, vinc_y, stroke, TFT_WHITE);
     draw_math(display, args, rad_x, rad_y, level, selected_node);
     return;
   }
 
   if ((op == "root" || op == "surd" || op == "NTHROOT") && args.type == giac::_VECT &&
       args._VECTptr->size() == 2) {
-    const giac::gen &radicand = (*args._VECTptr)[0];
-    const giac::gen &index = (*args._VECTptr)[1];
+    const giac::gen &a0 = (*args._VECTptr)[0];
+    const giac::gen &a1 = (*args._VECTptr)[1];
+    bool index_first = (op == "root" || op == "NTHROOT");
+    const giac::gen &radicand = index_first ? a1 : a0;
+    const giac::gen &index = index_first ? a0 : a1;
     MathLayout rad = math_layout(radicand, display, level);
     MathLayout idx = math_layout(index, display, std::min(level + 1, 2));
+    int32_t stroke = math_stroke(display, level);
     int32_t hook_w = std::max(kMath.radical_hook_width, line_height / 3);
-    int32_t over = kMath.radical_rule_thickness + kMath.radical_gap;
+    int32_t over = stroke + kMath.radical_gap;
     int32_t rad_body_h = rad.height + over;
     // Anchor index to the hook corner; allow it to extend above the radical body.
     int32_t hook_anchor_from_top = over + std::max(2, (rad.height * 2) / 3);
@@ -425,26 +569,27 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     int32_t idx_y = y + idx_y_rel + top_extra;
     draw_math(display, index, idx_x, idx_y, std::min(level + 1, 2), selected_node);
     // radical sign
-    display->drawLine(hook_x, mid_y - 2, hook_x + hook_w / 2, base_y, TFT_WHITE);
-    display->drawLine(hook_x + hook_w / 2, base_y, hook_x + hook_w, vinc_y, TFT_WHITE);
-    display->drawLine(hook_x + hook_w, vinc_y, overbar_end, vinc_y, TFT_WHITE);
+    set_font_for_level(display, level);
+    draw_math_line(display, hook_x, mid_y - 2, hook_x + hook_w / 2, base_y, stroke, TFT_WHITE);
+    draw_math_line(display, hook_x + hook_w / 2, base_y, hook_x + hook_w, vinc_y, stroke, TFT_WHITE);
+    draw_math_hline(display, hook_x + hook_w, overbar_end, vinc_y, stroke, TFT_WHITE);
     draw_math(display, radicand, rad_x, rad_y, level, selected_node);
     return;
   }
 
   if (symbolic->sommet == giac::at_abs) {
     MathLayout child = math_layout(args, display, level);
-    int32_t bar_w = std::max(2, line_height / 8);
+    set_font_for_level(display, level);
+    int32_t stroke = math_stroke(display, level);
+    int32_t bar_w = std::max(2, stroke);
     int32_t pad = 1;
     int32_t bar_h = layout.height;
     int32_t child_x = x + bar_w + pad;
     // vertical bars
-    display->drawLine(x, y, x, y + bar_h - 1);
-    if (bar_w > 1) display->drawLine(x + 1, y, x + 1, y + bar_h - 1);
+    draw_math_vline(display, x, y, y + bar_h - 1, bar_w, TFT_WHITE);
     draw_math(display, args, child_x, y + layout.axis - child.axis, level, selected_node);
     int32_t rx = x + layout.width - bar_w;
-    display->drawLine(rx, y, rx, y + bar_h - 1);
-    if (bar_w > 1) display->drawLine(rx + 1, y, rx + 1, y + bar_h - 1);
+    draw_math_vline(display, rx, y, y + bar_h - 1, bar_w, TFT_WHITE);
     return;
   }
 
@@ -455,14 +600,14 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
   display->drawString(op.c_str(), x, text_y);
 
   int32_t child_x = x + display->textWidth(op.c_str()) + kSideGap;
-  int32_t paren_w = get_paren_width(display, child.height, line_height);
+  int32_t paren_w = get_paren_width(display, child.height, line_height, level);
   int32_t paren_y = y + layout.axis - child.axis - 1;
   int32_t paren_h = child.height + 2;
 
   if (child.height <= line_height) {
     display->drawString("(", child_x, text_y);
   } else {
-    draw_scaled_paren(display, child_x, paren_y, paren_h, paren_w, true);
+    draw_scaled_paren(display, child_x, paren_y, paren_h, paren_w, true, level);
   }
   child_x += paren_w;
 
@@ -473,7 +618,7 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
     display->drawString(")", child_x + child.width, text_y);
   } else {
     draw_scaled_paren(display, child_x + child.width, paren_y, paren_h, paren_w,
-                      false);
+                      false, level);
   }
 }
 } // namespace MathRenderer

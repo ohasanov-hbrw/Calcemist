@@ -285,8 +285,14 @@ def write_bdf(ufo: Path, out_bdf: Path, grid: int = 10, only_codepoints: Optiona
         g = parse_glif(gpath, gname)
         if not g.codepoints:
             continue
+        # Compatibility aliases: expose common symbols under conventional codepoints
+        # when the display font uses a stylistic/private mapping.
+        cps = list(g.codepoints)
+        if 0x1D70B in cps or gname == "piitalic":
+            if 0x03C0 not in cps:
+                cps.append(0x03C0)  # π
         rast = rasterize_glyph(g, finfo, grid=grid)
-        for cp in g.codepoints:
+        for cp in cps:
             if cp < 0:
                 continue
             if only_codepoints is not None and cp not in only_codepoints:

@@ -19,11 +19,13 @@ struct MathFonts {
   const lgfx::IFont* main;
   const lgfx::IFont* exponent;
   const lgfx::IFont* nested_exponent;
+  const lgfx::IFont* symbol_fallback = nullptr; // for symbols missing in main font (e.g. π)
 
   const lgfx::IFont* get(int32_t level) const {
-    if (level == 0) return main;
-    if (level == 1) return exponent;
-    return nested_exponent;
+    // Two-level math rendering: normal + small (for exponents/small elements).
+    if (level <= 0) return main ? main : (exponent ? exponent : nested_exponent);
+    const lgfx::IFont* small = exponent ? exponent : nested_exponent;
+    return small ? small : (main ? main : nested_exponent);
   }
 };
 

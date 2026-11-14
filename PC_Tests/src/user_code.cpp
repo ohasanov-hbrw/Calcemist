@@ -40,10 +40,24 @@ lgfx::LGFX_Sprite canvas(&lcd);
 
 MathRenderer::AstCursor cursor;
 
+// Math font selection: define MATH_FONT_CLASSWIZ_X to use ClassWiz X Display,
+// otherwise ClassWiz CW Display is used.
+//#define MATH_FONT_CLASSWIZ_X
+
+#if defined(MATH_FONT_CLASSWIZ_X)
+#define CLASSWIZ_MATH_FONT_DATA u8g2_font_classwiz_x
+#define CLASSWIZ_MATH_FONT_SMALL_DATA u8g2_font_classwiz_x_small
+#else
+#define CLASSWIZ_MATH_FONT_DATA u8g2_font_classwiz_cw
+#define CLASSWIZ_MATH_FONT_SMALL_DATA u8g2_font_classwiz_cw_small
+#endif
+
 const lgfx::U8g2font font7x13symbols(u8g2_font_7x13_m_symbols);
 const lgfx::U8g2font font7x13bold(u8g2_font_7x13B_tf);
 const lgfx::U8g2font font5x8normal(u8g2_font_5x8_tf);
 const lgfx::U8g2font font9x15symbols(u8g2_font_9x15_m_symbols);
+const lgfx::U8g2font fontClasswizMath(CLASSWIZ_MATH_FONT_DATA);
+const lgfx::U8g2font fontClasswizMathSmall(CLASSWIZ_MATH_FONT_SMALL_DATA);
 
 int32_t target_x = 160 * 256;
 int32_t target_y = 120 * 256;
@@ -332,7 +346,7 @@ void loop() {
   term.render(0, 120);
 
   if (has_pretty_result) {
-    MathFonts fonts{&font9x15symbols, &font7x13symbols, &font5x8normal};
+    MathFonts fonts{&fontClasswizMath, &font7x13symbols, &font7x13symbols, nullptr};
     render_giac_ast(&canvas, fonts, pretty_result, cursor, 8, 8);
   }
 
