@@ -147,6 +147,27 @@ bool needs_parens_in_product(const giac::gen &node) {
   return is_sum_node(node);
 }
 
+bool is_neg_term(const giac::gen &node, giac::gen &abs_term) {
+  // Numeric negatives
+  if (node.type == giac::_INT_ && node.val < 0) {
+    abs_term = giac::gen(-node.val);
+    return true;
+  }
+  if (node.type == giac::_ZINT && node._ZINTptr && mpz_sgn(*node._ZINTptr) < 0) {
+    abs_term = -node;
+    return true;
+  }
+  // Symbolic negation: -x
+  if (node.type == giac::_SYMB && node._SYMBptr) {
+    std::string op = node._SYMBptr->sommet.ptr()->print(giac::context0);
+    if (node._SYMBptr->sommet == giac::at_neg || op == "-") {
+      abs_term = node._SYMBptr->feuille;
+      return true;
+    }
+  }
+  return false;
+}
+
 MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display, int32_t level = 0);
 void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
                int32_t y, int32_t level, const giac::gen *selected_node);
@@ -297,12 +318,28 @@ MathLayout math_layout(const giac::gen &node, lgfx::LGFXBase *display,
 
     if (terms) {
       for (size_t i = 0; i < terms->size(); ++i) {
-        bool wrap = (symbolic->sommet == giac::at_prod) && needs_parens_in_product((*terms)[i]);
-        MathLayout child = math_layout_with_parens_if((*terms)[i], display, level, wrap);
-        int32_t separator_width = symbolic->sommet == giac::at_plus
-                                      ? display->textWidth("+") + kMathGap
-                                      : kMultiplicationWidth;
-        width += child.width + (i ? separator_width : 0);
+        const giac::gen &term = (*terms)[i];
+        giac::gen abs_term;
+        bool neg = (symbolic->sommet == giac::at_plus) && is_neg_term(term, abs_term);
+        const giac::gen &term_to_layout = neg ? abs_term : term;
+        bool wrap = (symbolic->sommet == giac::at_prod) && needs_parens_in_product(term_to_layout);
+        if (symbolic->sommet == giac::at_plus && neg) {
+          // keep simple sums readable; avoid wrapping plain negated terms oddly
+          wrap = wrap && needs_parens_in_product(term_to_layout);
+        }
+        MathLayout child = math_layout_with_parens_if(term_to_layout, display, level, wrap);
+        int32_t separator_width = 0;
+        if (i) {
+          if (symbolic->sommet == giac::at_plus) {
+            const char *sep = neg ? "-" : "+";
+            separator_width = display->textWidth(sep) + kMathGap;
+          } else {
+            separator_width = kMultiplicationWidth;
+          }
+        } else if (symbolic->sommet == giac::at_plus && neg) {
+          separator_width = display->textWidth("-"); // unary minus
+        }
+        width += child.width + separator_width;
         above_axis = std::max(above_axis, child.axis);
         below_axis = std::max(below_axis, child.height - child.axis);
       }
@@ -475,22 +512,31 @@ void draw_math(lgfx::LGFXBase *display, const giac::gen &node, int32_t x,
 
       for (size_t i = 0; i < args._VECTptr->size(); ++i) {
         const giac::gen &term = (*args._VECTptr)[i];
-        bool wrap = (symbolic->sommet == giac::at_prod) && needs_parens_in_product(term);
-        MathLayout child = math_layout_with_parens_if(term, display, level, wrap);
+        giac::gen abs_term;
+        bool neg = (symbolic->sommet == giac::at_plus) && is_neg_term(term, abs_term);
+        const giac::gen &term_to_draw = neg ? abs_term : term;
+        bool wrap = (symbolic->sommet == giac::at_prod) && needs_parens_in_product(term_to_draw);
+        MathLayout child = math_layout_with_parens_if(term_to_draw, display, level, wrap);
 
-        if (i) {
-          set_font_for_level(display, level);
-          if (symbolic->sommet == giac::at_plus) {
-            cursor += side_gap;
-            display->drawString("+", cursor, y + layout.axis - line_height / 2);
-            cursor += display->textWidth("+") + side_gap;
+        set_font_for_level(display, level);
+        if (symbolic->sommet == giac::at_plus) {
+          if (i == 0) {
+            if (neg) {
+              display->drawString("-", cursor, y + layout.axis - line_height / 2);
+              cursor += display->textWidth("-");
+            }
           } else {
-            display->fillCircle(cursor + kMultiplicationWidth / 2,
-                                y + layout.axis, 1, TFT_WHITE);
-            cursor += kMultiplicationWidth;
+            const char *sep = neg ? "-" : "+";
+            cursor += side_gap;
+            display->drawString(sep, cursor, y + layout.axis - line_height / 2);
+            cursor += display->textWidth(sep) + side_gap;
           }
+        } else if (i) {
+          display->fillCircle(cursor + kMultiplicationWidth / 2,
+                              y + layout.axis, 1, TFT_WHITE);
+          cursor += kMultiplicationWidth;
         }
-        draw_with_parens_if(display, term, cursor, y + layout.axis - child.axis, level, selected_node, wrap);
+        draw_with_parens_if(display, term_to_draw, cursor, y + layout.axis - child.axis, level, selected_node, wrap);
         cursor += child.width;
       }
       return;
